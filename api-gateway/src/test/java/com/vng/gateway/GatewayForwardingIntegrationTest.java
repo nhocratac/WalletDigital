@@ -73,8 +73,21 @@ class GatewayForwardingIntegrationTest {
         assertEquals("/wallets/1", forwarded.getPath());
         assertEquals("acme", forwarded.getHeader("X-Tenant-Id"));   // bóc từ JWT
         assertEquals("api-gateway", forwarded.getHeader("X-Service-Id"));
-        assertNotNull(forwarded.getHeader("X-Signature"));
-        assertNotNull(forwarded.getHeader("X-Timestamp"));
+        String fwdTs = forwarded.getHeader("X-Timestamp");
+        assertNotNull(fwdTs);
+        long ts = Long.parseLong(fwdTs);                       // must be parseable epoch seconds
+        assertTrue(Math.abs(java.time.Instant.now().getEpochSecond() - ts) < 120,
+                "X-Timestamp must be ~now");
+
+        // Recompute the signature independently via the SAME production signer to lock the
+        // end-to-end contract: serviceId="api-gateway", method="GET", downstreamPath="/wallets/1",
+        // empty body, secret="it-secret". wallet-service re-verifies with this exact canonical.
+        com.vng.gateway.infrastructure.security.HmacRequestSigner signer =
+                new com.vng.gateway.infrastructure.security.HmacRequestSigner();
+        String canonical = signer.buildCanonical("api-gateway", "GET", "/wallets/1", fwdTs, new byte[0]);
+        String expectedSig = signer.sign("it-secret", canonical);
+        assertEquals(expectedSig, forwarded.getHeader("X-Signature"),
+                "X-Signature must match canonical the gateway signs, so wallet-service can re-verify");
     }
 
     @Test

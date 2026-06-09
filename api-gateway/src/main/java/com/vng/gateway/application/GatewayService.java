@@ -4,10 +4,10 @@ import com.vng.gateway.domain.AuthenticatedCaller;
 import com.vng.gateway.domain.DownstreamClient;
 import com.vng.gateway.domain.DownstreamClient.DownstreamRequest;
 import com.vng.gateway.domain.DownstreamClient.DownstreamResponse;
-import com.vng.gateway.infrastructure.config.GatewayProperties;
-import com.vng.gateway.infrastructure.routing.RouteTable;
-import com.vng.gateway.infrastructure.routing.RouteTable.RouteMatch;
-import com.vng.gateway.infrastructure.security.HmacRequestSigner;
+import com.vng.gateway.domain.GatewayIdentity;
+import com.vng.gateway.domain.RequestSigner;
+import com.vng.gateway.domain.RouteResolver;
+import com.vng.gateway.domain.RouteResolver.RouteMatch;
 import org.springframework.stereotype.Service;
 
 import java.util.HashMap;
@@ -26,17 +26,17 @@ public class GatewayService {
         public NoRouteException(String path) { super("No route for " + path); }
     }
 
-    private final RouteTable routeTable;
-    private final HmacRequestSigner signer;
+    private final RouteResolver routeTable;
+    private final RequestSigner signer;
     private final DownstreamClient downstreamClient;
-    private final GatewayProperties props;
+    private final GatewayIdentity identity;
 
-    public GatewayService(RouteTable routeTable, HmacRequestSigner signer,
-                          DownstreamClient downstreamClient, GatewayProperties props) {
+    public GatewayService(RouteResolver routeTable, RequestSigner signer,
+                          DownstreamClient downstreamClient, GatewayIdentity identity) {
         this.routeTable = routeTable;
         this.signer = signer;
         this.downstreamClient = downstreamClient;
-        this.props = props;
+        this.identity = identity;
     }
 
     public DownstreamResponse route(String method, String requestPath, byte[] body,
@@ -48,12 +48,12 @@ public class GatewayService {
         RouteMatch route = match.get();
 
         String timestamp = Long.toString(epochSeconds);
-        String canonical = signer.buildCanonical(props.getServiceId(), method,
+        String canonical = signer.buildCanonical(identity.serviceId(), method,
                 route.downstreamPath(), timestamp, body == null ? new byte[0] : body);
-        String signature = signer.sign(props.getHmacSecret(), canonical);
+        String signature = signer.sign(identity.hmacSecret(), canonical);
 
         Map<String, String> headers = new HashMap<>();
-        headers.put("X-Service-Id", props.getServiceId());
+        headers.put("X-Service-Id", identity.serviceId());
         headers.put("X-Timestamp", timestamp);
         headers.put("X-Signature", signature);
         headers.put("X-Tenant-Id", caller.tenantId());   // bóc từ JWT, KHÔNG từ client

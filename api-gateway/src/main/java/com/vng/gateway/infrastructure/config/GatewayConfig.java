@@ -1,5 +1,6 @@
 package com.vng.gateway.infrastructure.config;
 
+import com.vng.gateway.domain.GatewayIdentity;
 import com.vng.gateway.domain.TokenVerifier;
 import com.vng.gateway.infrastructure.routing.RouteTable;
 import com.vng.gateway.infrastructure.security.JwtTokenVerifier;
@@ -18,6 +19,11 @@ public class GatewayConfig {
     @Bean
     public RouteTable routeTable(GatewayProperties props) {
         return new RouteTable(props.getRoutes());
+    }
+
+    @Bean
+    public GatewayIdentity gatewayIdentity(GatewayProperties props) {
+        return new GatewayIdentity(props.getServiceId(), props.getHmacSecret());
     }
 
     @Bean

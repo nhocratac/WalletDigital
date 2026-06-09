@@ -1,5 +1,6 @@
 package com.vng.gateway.infrastructure.security;
 
+import com.vng.gateway.domain.RequestSigner;
 import org.springframework.stereotype.Component;
 
 import javax.crypto.Mac;
@@ -13,13 +14,15 @@ import java.security.MessageDigest;
  *   serviceId \n method \n path \n timestamp \n sha256(body)
  */
 @Component
-public class HmacRequestSigner {
+public class HmacRequestSigner implements RequestSigner {
 
+    @Override
     public String buildCanonical(String serviceId, String method, String path,
                                  String timestamp, byte[] body) {
         return String.join("\n", serviceId, method, path, timestamp, sha256Hex(body));
     }
 
+    @Override
     public String sign(String secret, String canonical) {
         try {
             Mac mac = Mac.getInstance("HmacSHA256");

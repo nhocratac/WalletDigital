@@ -41,6 +41,15 @@ class JwtTokenVerifierTest {
     }
 
     @Test
+    void tokenMissingTenantClaim_throws() {
+        String token = keys.signTokenWithoutTenant("user-1", 300);
+        // tenant phải đến từ token; thiếu tenantId -> phải từ chối, không forward tenant null
+        InvalidTokenException ex =
+                assertThrows(InvalidTokenException.class, () -> verifier.verify(token));
+        assertTrue(ex.getMessage().contains("tenantId"));
+    }
+
+    @Test
     void expiredToken_throws() {
         String token = keys.signExpiredToken("user-1", "acme");
 

@@ -38,6 +38,17 @@ public final class RsaTestKeys {
                 .compact();
     }
 
+    /** Token hợp lệ về chữ ký nhưng thiếu claim tenantId. */
+    public String signTokenWithoutTenant(String userId, long expiresInSeconds) {
+        long now = System.currentTimeMillis();
+        return Jwts.builder()
+                .subject(userId)
+                .issuedAt(new Date(now))
+                .expiration(new Date(now + expiresInSeconds * 1000))
+                .signWith(privateKey, Jwts.SIG.RS256)
+                .compact();
+    }
+
     /** Token đã hết hạn (exp ở quá khứ). */
     public String signExpiredToken(String userId, String tenantId) {
         long past = System.currentTimeMillis() - 60_000;
