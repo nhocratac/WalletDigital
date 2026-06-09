@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Thiết kế: API Gateway Service</title>
+<style>
+  :root{
+    --bg:#0f1117; --card:#171a21; --ink:#e6e6e6; --muted:#9aa4b2;
+    --accent:#7c9cff; --accent2:#5be7c4; --line:#2a2f3a;
+    --red:#ff6b6b; --yellow:#ffd166; --green:#6bd68a; --white:#cfd6e4;
+  }
+  *{box-sizing:border-box}
+  body{margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+    line-height:1.65; font-size:16px;}
+  .wrap{max-width:920px; margin:0 auto; padding:48px 24px 96px}
+  header.hero{background:linear-gradient(135deg,#1b2030,#11141c);
+    border:1px solid var(--line); border-radius:16px; padding:32px; margin-bottom:32px;}
+  header.hero h1{margin:0 0 8px; font-size:30px}
+  .pill{display:inline-block; font-size:12px; padding:4px 10px; border-radius:999px;
+    background:rgba(124,156,255,.15); color:var(--accent); margin:4px 6px 0 0;
+    border:1px solid rgba(124,156,255,.3);}
+  .meta{color:var(--muted); font-size:14px; margin-top:12px}
+  h2{margin:42px 0 14px; font-size:22px; padding-bottom:8px; border-bottom:1px solid var(--line); color:#fff;}
+  h2 .num{color:var(--accent); margin-right:8px}
+  h3{margin:26px 0 10px; font-size:17px; color:var(--accent2)}
+  .card{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px 20px; margin:16px 0}
+  blockquote{margin:18px 0; padding:14px 18px; border-left:4px solid var(--accent);
+    background:rgba(124,156,255,.08); border-radius:0 10px 10px 0; color:var(--white);}
+  blockquote.lesson{border-left-color:var(--yellow); background:rgba(255,209,102,.08)}
+  blockquote.lesson strong{color:var(--yellow)}
+  pre{background:#0b0d13; border:1px solid var(--line); border-radius:10px; padding:16px;
+    overflow-x:auto; font-size:13px; line-height:1.5;
+    font-family:"SF Mono",Menlo,Consolas,monospace; color:#c8d3e6;}
+  table{width:100%; border-collapse:collapse; margin:14px 0; font-size:14.5px}
+  th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:top}
+  th{background:rgba(255,255,255,.04); color:#fff; font-weight:600}
+  code{background:rgba(255,255,255,.07); padding:2px 6px; border-radius:5px; font-size:13.5px;
+    font-family:"SF Mono",Menlo,Consolas,monospace; color:var(--accent2)}
+  ul{padding-left:22px} li{margin:6px 0}
+  .toc{columns:2; column-gap:24px; font-size:14px}
+  .toc a{color:var(--accent); text-decoration:none}
+  footer{margin-top:48px; color:var(--muted); font-size:13px; text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <h1>🚪 Thiết kế: API Gateway Service</h1>
+    <div>
+      <span class="pill">Học làm Software Architect</span>
+      <span class="pill">Gateway Pattern</span>
+      <span class="pill">JWT / RS256</span>
+      <span class="pill">Zero-Trust HMAC</span>
+      <span class="pill">Self-built (Spring MVC)</span>
+    </div>
+    <div class="meta">📅 2026-06-10 · Phạm vi: <b>MỘT</b> microservice — <code>api-gateway</code> (kiểm token + định tuyến, KHÔNG login)</div>
+    <blockquote style="margin-bottom:0">Cửa ngõ của hệ: verify JWT người dùng → bóc tenant → ký HMAC → forward xuống <code>wallet-service</code>. Khép lại phần "ngoài phạm vi" của thiết kế wallet.</blockquote>
+  </header>
+
+  <div class="card toc">
+    <a href="#s1">1. Bối cảnh &amp; Vấn đề</a><br>
+    <a href="#s2">2. Quyết định kiến trúc</a><br>
+    <a href="#s3">3. Luồng request</a><br>
+    <a href="#s4">4. Cấu trúc code</a><br>
+    <a href="#s5">5. JWT/RS256 &amp; HMAC</a><br>
+    <a href="#s6">6. Xử lý lỗi</a><br>
+    <a href="#s7">7. Kiểm thử</a><br>
+    <a href="#s8">8. Nợ kỹ thuật &amp; YAGNI</a><br>
+    <a href="#s9">9. Lộ trình triển khai</a>
+  </div>
+
+  <h2 id="s1"><span class="num">1.</span>Bối cảnh &amp; Vấn đề</h2>
+  <p><code>api-gateway</code> là <b>cửa ngõ</b>: mọi request từ người dùng đi qua nó trước khi tới service nghiệp vụ. Nó giải đúng phần "ngoài phạm vi" mà thiết kế wallet nhắc tới: xác thực <i>người dùng</i> và biến danh tính đó thành thông tin đáng tin cho service phía sau. Gateway này <b>không cấp token</b> — token do IdP ngoài cấp.</p>
+<pre>Người dùng --JWT(RS256)--> [api-gateway] --HMAC + X-Tenant-Id--> [wallet-service]
+                            (TA XÂY)                              (đã có)</pre>
+
+  <h2 id="s2"><span class="num">2.</span>Các quyết định kiến trúc &amp; lý do</h2>
+  <table>
+    <tr><th>Hạng mục</th><th>Lựa chọn</th><th>Lý do / Đánh đổi</th></tr>
+    <tr><td>Cách xây</td><td><b>Tự xây bằng Spring Boot MVC</b></td><td>Thấy rõ cơ chế (verify→bóc→ký→forward); stack đồng bộ wallet, không phải học reactive. Đánh đổi: không tối ưu tải cực lớn như Spring Cloud Gateway.</td></tr>
+    <tr><td>Phạm vi</td><td>Kiểm token + định tuyến (không login)</td><td>Single responsibility: cấp token là việc của IdP/auth-service riêng.</td></tr>
+    <tr><td>Thuật toán JWT</td><td><b>RS256 (bất đối xứng)</b></td><td>IdP giữ private key (ký); gateway chỉ có public key (verify) → gateway <i>không thể</i> giả token. Tách quyền "tạo" vs "kiểm".</td></tr>
+    <tr><td>Cấu trúc code</td><td>Clean Architecture <b>nhẹ tay</b></td><td>Gateway gần như không có nghiệp vụ → domain mỏng, chỉ giữ port cho 2 mảnh dễ thay. Tránh over-engineering.</td></tr>
+    <tr><td>Ký gọi nội bộ</td><td>HMAC (hợp đồng chung với wallet)</td><td>Cùng <code>canonical</code> + tên header mà wallet verify.</td></tr>
+    <tr><td>Nguồn tenant</td><td>Bóc từ claim JWT (không từ client)</td><td>Người dùng không thể tự khai tenant.</td></tr>
+    <tr><td>Resilience</td><td>Circuit Breaker <b>hoãn</b> (ghi note)</td><td>Gateway LÀ nơi có outbound call → là chỗ circuit breaker thuộc về. Thêm stage sau (Resilience4j).</td></tr>
+  </table>
+
+  <h2 id="s3"><span class="num">3.</span>Luồng request (Data Flow)</h2>
+<pre>Authorization: Bearer &lt;JWT&gt;   POST /api/wallets/1/topup
+   |
+   v [1] JwtAuthFilter — verify chữ ký JWT bằng PUBLIC key
+   |       Sai / hết hạn / thiếu  -> 401, CHẶN (không forward)
+   v [2] Bóc claims: userId (sub), tenantId
+   v [3] RouteTable: "/api/wallets/**" -> http://localhost:8080 (wallet)
+   |       Không khớp route -> 404
+   v [4] HmacRequestSigner — dựng canonical + ký, GẮN header:
+   |       X-Service-Id: api-gateway
+   |       X-Timestamp:  &lt;epoch&gt;
+   |       X-Signature:  HMAC-SHA256(sharedSecret, canonical)
+   |       X-Tenant-Id:  &lt;tenantId từ JWT&gt;     (KHÔNG lấy từ client)
+   |       X-Trace-Id:   &lt;truyền tiếp / sinh mới&gt;
+   v [5] RestClient forward -> nhận response -> trả client
+           Downstream 5xx -> 502 · timeout/không kết nối -> 504
+
+canonical = serviceId + "\n" + method + "\n" + path + "\n" + timestamp + "\n" + sha256(body)</pre>
+  <blockquote class="lesson"><strong>🔑 Hai điểm cốt lõi:</strong> (1) Tenant lấy từ JWT, không từ client → người dùng không giả được tenant. (2) <code>canonical</code> + tên header là HỢP ĐỒNG chung với wallet — lệch một ký tự là wallet trả 401. Lý tưởng tách thư viện <code>shared-hmac</code>.</blockquote>
+
+  <h2 id="s4"><span class="num">4.</span>Cấu trúc code (Clean Architecture — áp NHẸ)</h2>
+  <blockquote class="lesson"><strong>🔑 Bài học:</strong> Giá trị Clean Architecture tỉ lệ với độ phức tạp nghiệp vụ. Gateway gần như không có nghiệp vụ → domain mỏng là ĐÚNG. Chỉ giữ <i>port</i> ở 2 chỗ dễ thay đổi.</blockquote>
+<pre>com.vng.gateway
+├── GatewayApplication.java
+├── domain/                          &lt;- MỎNG: value object + 2 port
+│   ├── AuthenticatedCaller.java     · userId + tenantId (bóc từ JWT) — thuần Java
+│   ├── TokenVerifier.java           · PORT: token -> AuthenticatedCaller (hoặc ném lỗi)
+│   └── DownstreamClient.java        · PORT: forward request đã ký -> response
+├── application/
+│   └── GatewayService.java          · điều phối: verify -> chọn route -> ký -> forward
+└── infrastructure/
+    ├── security/
+    │   ├── JwtAuthFilter.java        · filter CHẶN: gọi TokenVerifier, 401 nếu sai (chạy đầu)
+    │   ├── JwtTokenVerifier.java     · ADAPTER cài TokenVerifier (RS256, public key)
+    │   └── HmacRequestSigner.java    · dựng canonical + ký — HỢP ĐỒNG chung với wallet
+    ├── routing/
+    │   ├── RouteTable.java           · map "/api/wallets/**" -> http://localhost:8080
+    │   ├── RestClientDownstream.java · ADAPTER cài DownstreamClient (Spring RestClient)
+    │   └── ForwardingController.java · controller "bắt tất cả" -> gọi GatewayService
+    ├── observability/
+    │   └── TraceIdFilter.java        · đảm bảo X-Trace-Id
+    └── config/
+        └── GatewayProperties.java    · nạp routes + hmac secret + jwt public key từ yml</pre>
+  <p><b>Hai port = hai chỗ dễ thay đổi:</b> <code>TokenVerifier</code> (đổi IdP/cách verify) và <code>DownstreamClient</code> (đổi RestClient→WebClient, hay sang Spring Cloud Gateway). Đặt port đúng <i>chỗ sẽ thay đổi</i>.</p>
+
+  <h2 id="s5"><span class="num">5.</span>JWT/RS256 &amp; HMAC</h2>
+  <table>
+    <tr><th>Tiêu chí</th><th>HS256 (đối xứng)</th><th>RS256 (bất đối xứng) ⭐</th></tr>
+    <tr><td>Khoá</td><td>1 secret chung ký &amp; verify</td><td>IdP giữ private (ký); gateway có public (verify)</td></tr>
+    <tr><td>Rủi ro</td><td>Gateway biết secret → có thể giả token</td><td>Gateway <b>không thể</b> tạo token</td></tr>
+    <tr><td>Phù hợp</td><td>Một bên vừa ký vừa verify</td><td>Nhiều service verify, một IdP ký — <b>đúng mô hình</b></td></tr>
+  </table>
+  <p><b>JwtTokenVerifier</b>: tách Bearer token → verify chữ ký (public key) → kiểm <code>exp</code> → (tùy chọn) kiểm issuer/audience → bóc claims → <code>AuthenticatedCaller(userId, tenantId)</code>.</p>
+  <blockquote class="lesson"><strong>🔑 Test khi chưa có IdP:</strong> sinh cặp khoá RSA; test helper ký token giả lập bằng PRIVATE key, gateway verify bằng PUBLIC key. <br><strong>Vì sao RS256 cho JWT nhưng HMAC cho gọi nội bộ?</strong> JWT cần "nhiều bên verify, một bên ký" → bất đối xứng. Gọi nội bộ giữa 2 service tin nhau → đối xứng (HMAC) đủ và đơn giản.</blockquote>
+
+  <h2 id="s6"><span class="num">6.</span>Xử lý lỗi</h2>
+  <table>
+    <tr><th>Tình huống</th><th>HTTP trả client</th><th>Ghi chú</th></tr>
+    <tr><td>Thiếu/sai/hết hạn JWT</td><td>401 Unauthorized</td><td>Chặn ngay, không forward</td></tr>
+    <tr><td>Không khớp route</td><td>404 Not Found</td><td>Path không thuộc service nào</td></tr>
+    <tr><td>Downstream trả 5xx</td><td>502 Bad Gateway</td><td>Lỗi từ service phía sau</td></tr>
+    <tr><td>Downstream timeout / không kết nối</td><td>504 Gateway Timeout</td><td>wallet chết/chậm</td></tr>
+    <tr><td>Lỗi nội bộ gateway</td><td>500</td><td>Bug của chính gateway</td></tr>
+  </table>
+  <blockquote class="lesson"><strong>💡 502/504 chính là chỗ Circuit Breaker thuộc về.</strong> Khi downstream liên tục timeout, breaker "mở" để gateway ngừng gọi và trả nhanh 503, tránh dồn request làm sập thêm. Khép lại đúng chỗ đã hoãn lúc thiết kế wallet: gateway là nơi outbound call xuất hiện.</blockquote>
+
+  <h2 id="s7"><span class="num">7.</span>Chiến lược kiểm thử</h2>
+<pre>Unit test (nhanh, không mạng):
+  · JwtTokenVerifier: hợp lệ -> AuthenticatedCaller đúng; sai chữ ký -> lỗi; hết hạn -> lỗi.
+  · HmacRequestSigner: input cố định -> đúng canonical + chữ ký kỳ vọng.
+      * KHOÁ hợp đồng với wallet — ai đổi canonical, test đỏ.
+
+Integration test (gateway chạy, downstream GIẢ LẬP bằng MockWebServer/WireMock):
+  · * Đầu-cuối: JWT hợp lệ -> verify, ký, forward
+       -> MockWebServer nhận đúng X-Tenant-Id (khớp JWT), X-Signature hợp lệ, X-Service-Id.
+  · Không có JWT -> 401, MockWebServer KHÔNG nhận gì.
+  · Downstream 500 -> 502.   ·   Downstream timeout -> 504.</pre>
+  <blockquote class="lesson"><strong>🔑 Bài học:</strong> Giả lập "hàng xóm" (MockWebServer/WireMock) là kỹ năng test sống còn trong microservice — kiểm soát downstream trả gì để test mọi nhánh lỗi, không cần dựng cả hệ thật.</blockquote>
+
+  <h2 id="s8"><span class="num">8.</span>Nợ kỹ thuật &amp; YAGNI</h2>
+  <div class="card">
+    <p><b>Nợ kỹ thuật / để stage sau:</b></p>
+    <ul>
+      <li><b>Circuit Breaker</b> (Resilience4j) bọc lời gọi downstream — gateway là nơi nó thuộc về.</li>
+      <li>Tách thư viện <code>shared-hmac</code> để gateway &amp; wallet dùng chung <code>buildCanonical()</code>.</li>
+      <li>Lấy public key động từ JWKS endpoint của IdP (giờ: nạp tĩnh từ config).</li>
+    </ul>
+    <p><b>Cố tình chưa làm:</b></p>
+    <ul>
+      <li>Cấp token / login (thuộc IdP/auth-service riêng).</li>
+      <li>Rate limiting, logging nâng cao, nhiều downstream route (giờ chỉ wallet).</li>
+      <li>Chuyển sang Spring Cloud Gateway (sau khi đã hiểu cơ chế).</li>
+    </ul>
+  </div>
+
+  <h2 id="s9"><span class="num">9.</span>Lộ trình triển khai đề xuất</h2>
+  <table>
+    <tr><th>#</th><th>Bước</th><th>Khái niệm học được</th></tr>
+    <tr><td>1</td><td>Khởi tạo project + AuthenticatedCaller + 2 port</td><td>Domain mỏng, ports</td></tr>
+    <tr><td>2</td><td>JwtTokenVerifier (RS256) + unit test</td><td>JWT bất đối xứng, ký/verify</td></tr>
+    <tr><td>3</td><td>HmacRequestSigner + test khoá hợp đồng</td><td>Contract giữa service</td></tr>
+    <tr><td>4</td><td>JwtAuthFilter + RouteTable + GatewayProperties</td><td>Filter chặn, routing</td></tr>
+    <tr><td>5</td><td>GatewayService + ForwardingController + RestClientDownstream</td><td>Forward thật</td></tr>
+    <tr><td>6</td><td>Integration test với MockWebServer</td><td>Giả lập downstream, 401/502/504</td></tr>
+    <tr><td>7</td><td>(Stage sau) Circuit Breaker + shared-hmac</td><td>Resilience, chống lệch hợp đồng</td></tr>
+  </table>
+
+  <footer>Generated for học tập · api-gateway · 2026-06-10</footer>
+</div>
+</body>
+</html>
