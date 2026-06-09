@@ -53,6 +53,7 @@ class WalletServiceTest {
 
         assertEquals(created.getId(), found.getId());
         assertEquals("Bob", found.getOwnerName());
+        assertEquals(0, BigDecimal.ZERO.compareTo(found.getBalance()));
     }
 
     @Test

@@ -1,22 +1,55 @@
 package com.vng.wallet.infrastructure.web;
 
+import com.vng.wallet.application.WalletService;
+import com.vng.wallet.domain.Wallet;
+import com.vng.wallet.domain.WalletRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
+
+import java.math.BigDecimal;
+import java.util.Optional;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-@SpringBootTest
-@AutoConfigureMockMvc
+@WebMvcTest(WalletController.class)
+@Import({GlobalExceptionHandler.class, WalletControllerTest.TestStubConfig.class})
 class WalletControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    /**
+     * Cung cấp WalletService thật, được "tiêm" một WalletRepository stub.
+     * WalletRepository là PORT (interface) nên stub được bằng anonymous class —
+     * không cần Mockito mock class cụ thể (tránh lỗi byte-buddy trên JDK mới).
+     */
+    @TestConfiguration
+    static class TestStubConfig {
+        @Bean
+        WalletService walletService() {
+            return new WalletService(new WalletRepository() {
+                @Override
+                public Wallet save(Wallet wallet) {
+                    // Stub: gán id cố định, giữ nguyên ownerName + balance (0 cho ví mới).
+                    return new Wallet(1L, wallet.getOwnerName(), wallet.getBalance());
+                }
+
+                @Override
+                public Optional<Wallet> findById(Long id) {
+                    // Stub: không có ví nào -> service ném WalletNotFoundException.
+                    return Optional.empty();
+                }
+            });
+        }
+    }
 
     @Test
     void createWallet_returns201WithZeroBalance() throws Exception {
@@ -40,6 +73,7 @@ class WalletControllerTest {
         mockMvc.perform(post("/wallets")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"ownerName\":\"\"}"))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("ownerName must not be empty"));
     }
 }
