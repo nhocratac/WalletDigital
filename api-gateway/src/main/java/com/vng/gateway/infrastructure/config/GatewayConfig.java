@@ -1,6 +1,10 @@
 package com.vng.gateway.infrastructure.config;
 
+import com.vng.gateway.application.GatewayService;
+import com.vng.gateway.domain.DownstreamClient;
 import com.vng.gateway.domain.GatewayIdentity;
+import com.vng.gateway.domain.RequestSigner;
+import com.vng.gateway.domain.RouteResolver;
 import com.vng.gateway.domain.TokenVerifier;
 import com.vng.gateway.infrastructure.routing.RouteTable;
 import com.vng.gateway.infrastructure.security.JwtTokenVerifier;
@@ -36,6 +40,12 @@ public class GatewayConfig {
                 .withReadTimeout(props.getReadTimeout());
         ClientHttpRequestFactory factory = ClientHttpRequestFactoryBuilder.detect().build(settings);
         return RestClient.builder().requestFactory(factory).build();
+    }
+
+    @Bean
+    public GatewayService gatewayService(RouteResolver routeTable, RequestSigner signer,
+                                         DownstreamClient downstreamClient, GatewayIdentity identity) {
+        return new GatewayService(routeTable, signer, downstreamClient, identity);
     }
 
     @Bean

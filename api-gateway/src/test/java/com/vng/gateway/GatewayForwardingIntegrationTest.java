@@ -95,6 +95,47 @@ class GatewayForwardingIntegrationTest {
     }
 
     @Test
+    void validJwt_forwardsPostBodyIntactAndSignsOverBodyHash() throws Exception {
+        wallet.enqueue(new MockResponse().setResponseCode(200).setBody("{\"ok\":true}"));
+        String token = keys.signToken("user-1", "acme", 300);
+        String payload = "{\"amount\":50}";
+
+        HttpHeaders h = authHeaders(token);
+        h.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<String> resp = rest.exchange(
+                "http://localhost:" + gatewayPort + "/api/wallets/1/topup",
+                HttpMethod.POST, new HttpEntity<>(payload, h), String.class);
+        assertEquals(200, resp.getStatusCode().value());
+
+        RecordedRequest forwarded = wallet.takeRequest(2, TimeUnit.SECONDS);
+        assertNotNull(forwarded);
+        assertEquals("POST", forwarded.getMethod());
+        assertEquals("/wallets/1/topup", forwarded.getPath());
+        assertEquals("acme", forwarded.getHeader("X-Tenant-Id"));
+
+        // (a) body forwarded intact (raw bytes, no re-serialization)
+        String forwardedBody = forwarded.getBody().readUtf8();
+        assertEquals(payload, forwardedBody);
+
+        // (b) X-Signature recomputed over canonical with sha256(REAL body bytes)
+        String fwdTs = forwarded.getHeader("X-Timestamp");
+        assertNotNull(fwdTs);
+        byte[] bodyBytes = payload.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+        StringBuilder bodySha = new StringBuilder();
+        for (byte b : md.digest(bodyBytes)) bodySha.append(String.format("%02x", b));
+
+        String canonical = String.join("\n", "api-gateway", "POST", "/wallets/1/topup", fwdTs, bodySha.toString());
+        javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
+        mac.init(new javax.crypto.spec.SecretKeySpec(
+                "it-secret".getBytes(java.nio.charset.StandardCharsets.UTF_8), "HmacSHA256"));
+        StringBuilder hex = new StringBuilder();
+        for (byte b : mac.doFinal(canonical.getBytes(java.nio.charset.StandardCharsets.UTF_8))) hex.append(String.format("%02x", b));
+        assertEquals(hex.toString(), forwarded.getHeader("X-Signature"),
+                "X-Signature must be computed over sha256 of the actual forwarded body");
+    }
+
+    @Test
     void missingJwt_returns401AndDoesNotForward() {
         int before = wallet.getRequestCount();
 

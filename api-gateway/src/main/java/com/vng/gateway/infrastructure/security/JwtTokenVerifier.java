@@ -38,7 +38,7 @@ public class JwtTokenVerifier implements TokenVerifier {
             return new AuthenticatedCaller(userId, tenantId);
         } catch (JwtException e) {
             // bao gồm chữ ký sai, hết hạn, malformed
-            throw new InvalidTokenException("Invalid JWT: " + e.getMessage());
+            throw new InvalidTokenException("Invalid JWT: " + e.getMessage(), e);
         }
     }
 }

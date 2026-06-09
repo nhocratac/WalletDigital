@@ -52,11 +52,9 @@ class JwtTokenVerifierTest {
     @Test
     void expiredToken_throws() {
         String token = keys.signExpiredToken("user-1", "acme");
-
         InvalidTokenException ex =
                 assertThrows(InvalidTokenException.class, () -> verifier.verify(token));
-        // phải bị từ chối VÌ hết hạn, không phải vì lý do khác
-        assertTrue(ex.getMessage().toLowerCase().contains("expired"),
-                "expected rejection reason to be expiry, got: " + ex.getMessage());
+        // bị từ chối VÌ hết hạn, gắn với kiểu exception thay vì câu chữ của thư viện
+        assertInstanceOf(io.jsonwebtoken.ExpiredJwtException.class, ex.getCause());
     }
 }

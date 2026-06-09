@@ -8,7 +8,6 @@ import com.vng.gateway.domain.GatewayIdentity;
 import com.vng.gateway.domain.RequestSigner;
 import com.vng.gateway.domain.RouteResolver;
 import com.vng.gateway.domain.RouteResolver.RouteMatch;
-import org.springframework.stereotype.Service;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -19,7 +18,6 @@ import java.util.Optional;
  * resolve route -> dựng header đã ký -> forward.
  * Ném NoRouteException nếu không khớp route (controller map -> 404).
  */
-@Service
 public class GatewayService {
 
     public static class NoRouteException extends RuntimeException {
