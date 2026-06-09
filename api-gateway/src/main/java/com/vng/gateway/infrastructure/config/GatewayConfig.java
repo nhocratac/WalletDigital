@@ -4,8 +4,11 @@ import com.vng.gateway.domain.GatewayIdentity;
 import com.vng.gateway.domain.TokenVerifier;
 import com.vng.gateway.infrastructure.routing.RouteTable;
 import com.vng.gateway.infrastructure.security.JwtTokenVerifier;
+import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
+import org.springframework.boot.http.client.ClientHttpRequestFactorySettings;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.client.ClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
 import java.security.KeyFactory;
@@ -27,8 +30,12 @@ public class GatewayConfig {
     }
 
     @Bean
-    public RestClient restClient() {
-        return RestClient.create();
+    public RestClient restClient(GatewayProperties props) {
+        ClientHttpRequestFactorySettings settings = ClientHttpRequestFactorySettings.defaults()
+                .withConnectTimeout(props.getConnectTimeout())
+                .withReadTimeout(props.getReadTimeout());
+        ClientHttpRequestFactory factory = ClientHttpRequestFactoryBuilder.detect().build(settings);
+        return RestClient.builder().requestFactory(factory).build();
     }
 
     @Bean

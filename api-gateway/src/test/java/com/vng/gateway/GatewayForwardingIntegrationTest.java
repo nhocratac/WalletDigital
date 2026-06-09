@@ -79,15 +79,19 @@ class GatewayForwardingIntegrationTest {
         assertTrue(Math.abs(java.time.Instant.now().getEpochSecond() - ts) < 120,
                 "X-Timestamp must be ~now");
 
-        // Recompute the signature independently via the SAME production signer to lock the
-        // end-to-end contract: serviceId="api-gateway", method="GET", downstreamPath="/wallets/1",
-        // empty body, secret="it-secret". wallet-service re-verifies with this exact canonical.
-        com.vng.gateway.infrastructure.security.HmacRequestSigner signer =
-                new com.vng.gateway.infrastructure.security.HmacRequestSigner();
-        String canonical = signer.buildCanonical("api-gateway", "GET", "/wallets/1", fwdTs, new byte[0]);
-        String expectedSig = signer.sign("it-secret", canonical);
-        assertEquals(expectedSig, forwarded.getHeader("X-Signature"),
-                "X-Signature must match canonical the gateway signs, so wallet-service can re-verify");
+        // X-Signature must be recomputed WITHOUT the production signer so this test
+        // locks the wire-level canonical that wallet-service re-verifies.
+        // canonical = serviceId \n method \n path \n timestamp \n sha256(body)
+        String emptySha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"; // sha256("")
+        String canonical = String.join("\n", "api-gateway", "GET", "/wallets/1", fwdTs, emptySha);
+        javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
+        mac.init(new javax.crypto.spec.SecretKeySpec(
+                "it-secret".getBytes(java.nio.charset.StandardCharsets.UTF_8), "HmacSHA256"));
+        byte[] raw = mac.doFinal(canonical.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        StringBuilder hex = new StringBuilder(raw.length * 2);
+        for (byte b : raw) hex.append(String.format("%02x", b));
+        assertEquals(hex.toString(), forwarded.getHeader("X-Signature"),
+                "X-Signature must match the canonical wallet-service re-verifies");
     }
 
     @Test
