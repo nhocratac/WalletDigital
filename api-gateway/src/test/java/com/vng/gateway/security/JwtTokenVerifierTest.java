@@ -50,6 +50,26 @@ class JwtTokenVerifierTest {
     }
 
     @Test
+    void tokenSignedWithDifferentRsaAlg_throws() {
+        String token = keys.signTokenRs512("user-1", "acme", 300);
+        InvalidTokenException ex =
+                assertThrows(InvalidTokenException.class, () -> verifier.verify(token));
+        assertTrue(ex.getMessage().contains("alg"));
+    }
+
+    @Test
+    void unsecuredAlgNoneToken_throws() {
+        assertThrows(InvalidTokenException.class,
+                () -> verifier.verify(keys.signUnsecuredToken("user-1", "acme")));
+    }
+
+    @Test
+    void hmacTokenSignedWithRsaPublicKey_throws() {
+        assertThrows(InvalidTokenException.class,
+                () -> verifier.verify(keys.signHmacWithPublicKeyBytes("user-1", "acme")));
+    }
+
+    @Test
     void expiredToken_throws() {
         String token = keys.signExpiredToken("user-1", "acme");
         InvalidTokenException ex =

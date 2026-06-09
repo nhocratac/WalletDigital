@@ -59,7 +59,7 @@ class GatewayForwardingIntegrationTest {
 
     @Test
     void validJwt_forwardsSignedRequestWithTenantFromToken() throws Exception {
-        wallet.enqueue(new MockResponse().setResponseCode(200).setBody("{\"id\":1}"));
+        wallet.enqueue(new MockResponse().setResponseCode(200).setBody("{\"id\":1}").setHeader("Content-Type", "application/json"));
         String token = keys.signToken("user-1", "acme", 300);
 
         ResponseEntity<String> resp = rest.exchange(
@@ -67,6 +67,7 @@ class GatewayForwardingIntegrationTest {
                 HttpMethod.GET, new HttpEntity<>(authHeaders(token)), String.class);
 
         assertEquals(200, resp.getStatusCode().value());
+        assertEquals(MediaType.APPLICATION_JSON, resp.getHeaders().getContentType());
 
         RecordedRequest forwarded = wallet.takeRequest(2, TimeUnit.SECONDS);
         assertNotNull(forwarded);

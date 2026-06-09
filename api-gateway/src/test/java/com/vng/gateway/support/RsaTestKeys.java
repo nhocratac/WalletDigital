@@ -49,6 +49,41 @@ public final class RsaTestKeys {
                 .compact();
     }
 
+    /** Token ký bằng RSA alg khác (RS512) trên cùng private key. */
+    public String signTokenRs512(String userId, String tenantId, long expiresInSeconds) {
+        long now = System.currentTimeMillis();
+        return Jwts.builder()
+                .subject(userId)
+                .claim("tenantId", tenantId)
+                .issuedAt(new Date(now))
+                .expiration(new Date(now + expiresInSeconds * 1000))
+                .signWith(privateKey, Jwts.SIG.RS512)
+                .compact();
+    }
+
+    /** alg=none, no signWith — verifier must reject. */
+    public String signUnsecuredToken(String userId, String tenantId) {
+        long now = System.currentTimeMillis();
+        return Jwts.builder()
+                .subject(userId)
+                .claim("tenantId", tenantId)
+                .issuedAt(new Date(now))
+                .expiration(new Date(now + 300_000))   // valid exp so rejection is for alg, not expiry
+                .compact();
+    }
+
+    /** Classic RSA->HMAC confusion: HS256 using RSA public key bytes as HMAC secret. */
+    public String signHmacWithPublicKeyBytes(String userId, String tenantId) {
+        long now = System.currentTimeMillis();
+        return Jwts.builder()
+                .subject(userId)
+                .claim("tenantId", tenantId)
+                .issuedAt(new Date(now))
+                .expiration(new Date(now + 300_000))
+                .signWith(new javax.crypto.spec.SecretKeySpec(publicKey.getEncoded(), "HmacSHA256"), Jwts.SIG.HS256)
+                .compact();
+    }
+
     /** Token đã hết hạn (exp ở quá khứ). */
     public String signExpiredToken(String userId, String tenantId) {
         long past = System.currentTimeMillis() - 60_000;

@@ -6,6 +6,7 @@ import com.vng.gateway.domain.DownstreamClient.DownstreamResponse;
 import com.vng.gateway.infrastructure.observability.TraceIdFilter;
 import com.vng.gateway.infrastructure.security.JwtAuthFilter;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -37,6 +38,17 @@ public class ForwardingController {
                 traceId,
                 Instant.now().getEpochSecond());
 
-        return ResponseEntity.status(resp.status()).body(resp.body());
+        HttpHeaders out = new HttpHeaders();
+        if (resp.headers() != null) {
+            resp.headers().forEach((k, v) -> {
+                if (k != null && v != null
+                        && !k.equalsIgnoreCase("Transfer-Encoding")
+                        && !k.equalsIgnoreCase("Connection")
+                        && !k.equalsIgnoreCase("Content-Length")) {
+                    out.add(k, v);
+                }
+            });
+        }
+        return ResponseEntity.status(resp.status()).headers(out).body(resp.body());
     }
 }

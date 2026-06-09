@@ -29,6 +29,10 @@ public class JwtTokenVerifier implements TokenVerifier {
                     .verifyWith(publicKey)   // kiểm chữ ký; cũng kiểm exp tự động
                     .build()
                     .parseSignedClaims(token);
+            String alg = jws.getHeader().getAlgorithm();
+            if (!"RS256".equals(alg)) {
+                throw new InvalidTokenException("Unexpected JWT alg: " + alg);
+            }
             Claims claims = jws.getPayload();
             String userId = claims.getSubject();
             String tenantId = claims.get("tenantId", String.class);
