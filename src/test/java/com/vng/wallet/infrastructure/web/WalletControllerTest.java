@@ -89,4 +89,22 @@ class WalletControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("ownerName must not be empty"));
     }
+
+    @Test
+    void createWallet_nullOwner_returns400() throws Exception {
+        mockMvc.perform(post("/wallets")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("ownerName must not be empty"));
+    }
+
+    @Test
+    void createWallet_whitespaceOwner_returns400() throws Exception {
+        mockMvc.perform(post("/wallets")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"ownerName\":\"   \"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("ownerName must not be empty"));
+    }
 }
