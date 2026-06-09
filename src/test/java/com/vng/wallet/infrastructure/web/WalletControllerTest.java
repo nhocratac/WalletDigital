@@ -44,7 +44,10 @@ class WalletControllerTest {
 
                 @Override
                 public Optional<Wallet> findById(Long id) {
-                    // Stub: không có ví nào -> service ném WalletNotFoundException.
+                    // Stub: chỉ ví id=1 tồn tại (số dư 250.00); id khác -> rỗng -> 404.
+                    if (id == 1L) {
+                        return Optional.of(new Wallet(1L, "Existing Owner", new BigDecimal("250.00")));
+                    }
                     return Optional.empty();
                 }
             });
@@ -63,10 +66,19 @@ class WalletControllerTest {
     }
 
     @Test
+    void getExistingWallet_returns200WithBody() throws Exception {
+        mockMvc.perform(get("/wallets/1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(1))
+                .andExpect(jsonPath("$.ownerName").value("Existing Owner"))
+                .andExpect(jsonPath("$.balance").value(250.00));
+    }
+
+    @Test
     void getMissingWallet_returns404() throws Exception {
         mockMvc.perform(get("/wallets/999999"))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.error").exists());
+                .andExpect(jsonPath("$.error").value("Wallet not found with id: 999999"));
     }
 
     @Test
