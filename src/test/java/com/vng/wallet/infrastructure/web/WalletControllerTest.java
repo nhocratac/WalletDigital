@@ -57,6 +57,7 @@ class WalletControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"ownerName\":\"Alice\"}"))
                 .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").value(1))
                 .andExpect(jsonPath("$.ownerName").value("Alice"))
                 .andExpect(jsonPath("$.balance").value(0));
     }
