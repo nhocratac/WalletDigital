@@ -214,4 +214,44 @@ class GatewayForwardingIntegrationTest {
 
         assertEquals(404, resp.getStatusCode().value());
     }
+
+    @Test
+    void clientSuppliedSecurityHeaders_cannotOverrideSignedHeaders() throws Exception {
+        wallet.enqueue(new MockResponse().setResponseCode(200).setBody("{\"ok\":true}"));
+        String token = keys.signToken("user-1", "acme", 300);
+
+        HttpHeaders h = authHeaders(token);
+        h.add("X-Tenant-Id", "evil-tenant");
+        h.add("X-Service-Id", "spoofed");
+        h.add("X-Signature", "deadbeef");
+        h.add("X-Timestamp", "1");
+        h.add("X-Trace-Id", "injected");
+
+        ResponseEntity<String> resp = rest.exchange(
+                "http://localhost:" + gatewayPort + "/api/wallets/1",
+                HttpMethod.GET, new HttpEntity<>(h), String.class);
+        assertEquals(200, resp.getStatusCode().value());
+
+        RecordedRequest fwd = wallet.takeRequest(2, TimeUnit.SECONDS);
+        assertNotNull(fwd);
+        assertEquals("acme", fwd.getHeader("X-Tenant-Id"));        // from JWT, not client
+        assertEquals("api-gateway", fwd.getHeader("X-Service-Id")); // gateway identity, not client
+        assertNotEquals("injected", fwd.getHeader("X-Trace-Id"));   // trace id is gateway-assigned
+
+        // Strong lock: X-Signature must equal the locally recomputed HMAC over the canonical
+        // (NOT the client-supplied "deadbeef"), proving the signed header overwrote passthrough.
+        String fwdTs = fwd.getHeader("X-Timestamp");
+        assertNotNull(fwdTs);
+        assertNotEquals("deadbeef", fwd.getHeader("X-Signature"));
+        String emptySha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"; // sha256("")
+        String canonical = String.join("\n", "api-gateway", "GET", "/wallets/1", fwdTs, emptySha);
+        javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
+        mac.init(new javax.crypto.spec.SecretKeySpec(
+                "it-secret".getBytes(java.nio.charset.StandardCharsets.UTF_8), "HmacSHA256"));
+        StringBuilder hex = new StringBuilder();
+        for (byte b : mac.doFinal(canonical.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+            hex.append(String.format("%02x", b));
+        assertEquals(hex.toString(), fwd.getHeader("X-Signature"),
+                "X-Signature must be the gateway-computed HMAC, never the client value");
+    }
 }
