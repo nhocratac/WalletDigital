@@ -5,6 +5,7 @@ import com.vng.wallet.domain.WalletRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
+import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 import org.springframework.context.annotation.Import;
 
 import java.math.BigDecimal;
@@ -19,11 +20,17 @@ class JpaWalletRepositoryTest {
     @Autowired
     private WalletRepository repository;   // tiêm qua PORT, không phải class cụ thể
 
+    @Autowired
+    private TestEntityManager em;
+
     @Test
     void saveThenFind_roundTripsThroughDatabase() {
         Wallet saved = repository.save(Wallet.createNew("Alice"));
 
         assertNotNull(saved.getId());
+
+        em.flush();   // push INSERT to DB
+        em.clear();   // evict L1 cache so findById reloads from the row
 
         Optional<Wallet> found = repository.findById(saved.getId());
         assertTrue(found.isPresent());
