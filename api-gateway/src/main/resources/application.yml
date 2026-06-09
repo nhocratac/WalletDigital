@@ -3,3 +3,11 @@ server:
 spring:
   application:
     name: api-gateway
+
+gateway:
+  service-id: api-gateway
+  hmac-secret: ${GATEWAY_HMAC_SECRET:local-dev-secret}
+  routes:
+    "[/api/wallets]": http://localhost:8080
+  # PEM Base64 (chỉ phần DER, bỏ dòng BEGIN/END). Nạp từ env ở production.
+  jwt-public-key: ${GATEWAY_JWT_PUBLIC_KEY:}
