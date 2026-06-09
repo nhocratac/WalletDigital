@@ -13,6 +13,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /** Bắt MỌI path/method, lấy caller (do filter đặt), gọi GatewayService. */
 @RestController
@@ -30,13 +32,26 @@ public class ForwardingController {
         AuthenticatedCaller caller = (AuthenticatedCaller) request.getAttribute(JwtAuthFilter.CALLER_ATTR);
         String traceId = (String) request.getAttribute(TraceIdFilter.ATTR);
 
+        // Forward only safe content-negotiation headers; security X-* headers are set
+        // (and signed) by GatewayService and cannot be overridden by the client.
+        Map<String, String> passthrough = new LinkedHashMap<>();
+        String contentType = request.getHeader(HttpHeaders.CONTENT_TYPE);
+        if (contentType != null && !contentType.isBlank()) {
+            passthrough.put(HttpHeaders.CONTENT_TYPE, contentType);
+        }
+        String accept = request.getHeader(HttpHeaders.ACCEPT);
+        if (accept != null && !accept.isBlank()) {
+            passthrough.put(HttpHeaders.ACCEPT, accept);
+        }
+
         DownstreamResponse resp = gatewayService.route(
                 request.getMethod(),
                 request.getRequestURI(),
                 body,
                 caller,
                 traceId,
-                Instant.now().getEpochSecond());
+                Instant.now().getEpochSecond(),
+                passthrough);
 
         HttpHeaders out = new HttpHeaders();
         if (resp.headers() != null) {

@@ -39,6 +39,17 @@ public class GatewayService {
 
     public DownstreamResponse route(String method, String requestPath, byte[] body,
                                     AuthenticatedCaller caller, String traceId, long epochSeconds) {
+        return route(method, requestPath, body, caller, traceId, epochSeconds, Map.of());
+    }
+
+    /**
+     * @param passthroughHeaders content-negotiation headers from the inbound request
+     *        (e.g. Content-Type, Accept) to forward downstream. These are applied FIRST
+     *        and can never override the signed security headers below.
+     */
+    public DownstreamResponse route(String method, String requestPath, byte[] body,
+                                    AuthenticatedCaller caller, String traceId, long epochSeconds,
+                                    Map<String, String> passthroughHeaders) {
         Optional<RouteMatch> match = routeTable.resolve(requestPath);
         if (match.isEmpty()) {
             throw new NoRouteException(requestPath);
@@ -51,6 +62,14 @@ public class GatewayService {
         String signature = signer.sign(identity.hmacSecret(), canonical);
 
         Map<String, String> headers = new HashMap<>();
+        // Safe content-negotiation passthrough; security headers below always win.
+        if (passthroughHeaders != null) {
+            passthroughHeaders.forEach((k, v) -> {
+                if (k != null && v != null) {
+                    headers.put(k, v);
+                }
+            });
+        }
         headers.put("X-Service-Id", identity.serviceId());
         headers.put("X-Timestamp", timestamp);
         headers.put("X-Signature", signature);
