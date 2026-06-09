@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- The "parent" gives us sensible defaults + a curated set of library versions
+         that are known to work together. This is why Spring Boot apps need so little config. -->
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.4.4</version>
+        <relativePath/>
+    </parent>
+
+    <!-- Identity of OUR project (group = company/team, artifact = app name) -->
+    <groupId>com.vng.wallet</groupId>
+    <artifactId>wallet-service</artifactId>
+    <version>0.0.1</version>
+    <name>wallet-service</name>
+    <description>Learning microservice: a simple wallet/payment service</description>
+
+    <properties>
+        <!-- Compile to Java 21 bytecode (very stable + supported by every library),
+             even though we RUN on Java 25. Avoids edge-case compatibility issues. -->
+        <java.version>21</java.version>
+    </properties>
+
+    <dependencies>
+        <!-- Web: gives us REST controllers + an embedded Tomcat server.
+             A "microservice" is just an app that runs its own web server like this. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!-- JPA: lets us save/load Java objects to a database without writing raw SQL. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+
+        <!-- Validation: lets us reject bad input (e.g. empty owner name) automatically. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+
+        <!-- H2: an in-memory database. Starts instantly, no install needed.
+             Stage 2 we'll replace this with MySQL. -->
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- Test tools (JUnit etc.) — used when we write automated tests. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- This plugin lets us run the app with: mvn spring-boot:run -->
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

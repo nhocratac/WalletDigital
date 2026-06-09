@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Thiết kế: Multi-Tenant Wallet Service</title>
+<style>
+  :root{
+    --bg:#0f1117; --card:#171a21; --ink:#e6e6e6; --muted:#9aa4b2;
+    --accent:#7c9cff; --accent2:#5be7c4; --line:#2a2f3a;
+    --red:#ff6b6b; --yellow:#ffd166; --green:#6bd68a; --white:#cfd6e4;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    line-height:1.65; font-size:16px;
+  }
+  .wrap{max-width:920px; margin:0 auto; padding:48px 24px 96px}
+  header.hero{
+    background:linear-gradient(135deg,#1b2030,#11141c);
+    border:1px solid var(--line); border-radius:16px; padding:32px;
+    margin-bottom:32px;
+  }
+  header.hero h1{margin:0 0 8px; font-size:30px; letter-spacing:.3px}
+  .pill{
+    display:inline-block; font-size:12px; padding:4px 10px; border-radius:999px;
+    background:rgba(124,156,255,.15); color:var(--accent); margin:4px 6px 0 0;
+    border:1px solid rgba(124,156,255,.3);
+  }
+  .meta{color:var(--muted); font-size:14px; margin-top:12px}
+  h2{
+    margin:42px 0 14px; font-size:22px; padding-bottom:8px;
+    border-bottom:1px solid var(--line); color:#fff;
+  }
+  h2 .num{color:var(--accent); font-variant-numeric:tabular-nums; margin-right:8px}
+  h3{margin:26px 0 10px; font-size:17px; color:var(--accent2)}
+  p{color:var(--ink)}
+  .card{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px 20px; margin:16px 0}
+  blockquote{
+    margin:18px 0; padding:14px 18px; border-left:4px solid var(--accent);
+    background:rgba(124,156,255,.08); border-radius:0 10px 10px 0; color:var(--white);
+  }
+  blockquote.lesson{border-left-color:var(--yellow); background:rgba(255,209,102,.08)}
+  blockquote.lesson strong{color:var(--yellow)}
+  pre{
+    background:#0b0d13; border:1px solid var(--line); border-radius:10px;
+    padding:16px; overflow-x:auto; font-size:13px; line-height:1.5;
+    font-family:"SF Mono",Menlo,Consolas,monospace; color:#c8d3e6;
+  }
+  table{width:100%; border-collapse:collapse; margin:14px 0; font-size:14.5px}
+  th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:top}
+  th{background:rgba(255,255,255,.04); color:#fff; font-weight:600}
+  tr:hover td{background:rgba(255,255,255,.02)}
+  code{background:rgba(255,255,255,.07); padding:2px 6px; border-radius:5px; font-size:13.5px;
+    font-family:"SF Mono",Menlo,Consolas,monospace; color:var(--accent2)}
+  .sev{display:inline-block; padding:2px 8px; border-radius:6px; font-size:12px; font-weight:600}
+  .sev.red{background:rgba(255,107,107,.18); color:var(--red)}
+  .sev.yellow{background:rgba(255,209,102,.18); color:var(--yellow)}
+  .sev.white{background:rgba(207,214,228,.14); color:var(--white)}
+  ul{padding-left:22px} li{margin:6px 0}
+  .toc{columns:2; column-gap:24px; font-size:14px}
+  .toc a{color:var(--accent); text-decoration:none}
+  .toc a:hover{text-decoration:underline}
+  footer{margin-top:48px; color:var(--muted); font-size:13px; text-align:center}
+  .tag{font-size:12px; color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <h1>🏦 Thiết kế: Multi-Tenant Wallet Service</h1>
+    <div>
+      <span class="pill">Học làm Software Architect</span>
+      <span class="pill">Multi-tenancy</span>
+      <span class="pill">Clean Architecture</span>
+      <span class="pill">Kiến trúc tài chính</span>
+      <span class="pill">Zero-Trust HMAC</span>
+      <span class="pill">Observability</span>
+    </div>
+    <div class="meta">📅 2026-06-09 · Phạm vi: <b>MỘT</b> microservice — <code>wallet-service</code></div>
+    <blockquote style="margin-bottom:0">Tài liệu này là <b>"hợp đồng thiết kế"</b> trước khi code. Mọi quyết định đều kèm <i>lý do</i> và <i>đánh đổi</i> — vì đó là bản chất công việc của một architect.</blockquote>
+  </header>
+
+  <div class="card toc">
+    <a href="#s1">1. Bối cảnh &amp; Vấn đề</a><br>
+    <a href="#s2">2. Quyết định kiến trúc</a><br>
+    <a href="#s3">3. Luồng request</a><br>
+    <a href="#s4">4. Cấu trúc code</a><br>
+    <a href="#s4b">4b. Bảo mật &amp; Observability</a><br>
+    <a href="#s5">5. Mô hình dữ liệu</a><br>
+    <a href="#s6">6. API &amp; Xử lý lỗi</a><br>
+    <a href="#s7">7. Kiểm thử</a><br>
+    <a href="#s8">8. Nợ kỹ thuật &amp; YAGNI</a><br>
+    <a href="#s9">9. Lộ trình triển khai</a>
+  </div>
+
+  <h2 id="s1"><span class="num">1.</span>Bối cảnh &amp; Vấn đề</h2>
+  <p>Xây một service quản lý ví tiền phục vụ <b>nhiều khách hàng (tenant)</b> trên <b>cùng một codebase</b>, nhưng dữ liệu mỗi khách phải <b>tách biệt tuyệt đối</b> — khách A không bao giờ thấy/đụng được ví của khách B.</p>
+  <p><code>wallet-service</code> là một mắt xích trong hệ microservice lớn hơn. Việc xác thực người dùng (JWT) do <b>một service khác</b> đảm nhiệm — KHÔNG thuộc phạm vi service này (nguyên tắc <i>single responsibility</i>).</p>
+<pre>Người dùng --JWT--> [API Gateway/Auth Service] --X-Tenant-Id--> [wallet-service]  &lt;-- ta xây cái này
+                     (ngoài phạm vi)                            (1 service)</pre>
+
+  <h2 id="s2"><span class="num">2.</span>Các quyết định kiến trúc &amp; lý do</h2>
+  <table>
+    <tr><th>Hạng mục</th><th>Lựa chọn</th><th>Lý do / Đánh đổi</th></tr>
+    <tr><td>Mức tách biệt dữ liệu</td><td><b>Schema-per-tenant</b><br>(mỗi tenant 1 schema, chung 1 DB)</td><td>Cân bằng giữa tách biệt và độ phức tạp. Mạnh hơn "chung bảng + tenant_id", nhẹ hơn "DB-per-tenant".</td></tr>
+    <tr><td>Xác định tenant</td><td>HTTP header <code>X-Tenant-Id</code></td><td>Hợp pattern gọi nội bộ giữa microservice (header đã đáng tin vì gateway xác thực trước). Tách riêng nên sau đổi sang JWT dễ.</td></tr>
+    <tr><td>Cấu trúc code</td><td><b>Clean Architecture</b> (thực dụng)</td><td>Lõi nghiệp vụ không phụ thuộc DB. Đánh đổi: nhiều file hơn, có bước map domain↔entity.</td></tr>
+    <tr><td>Routing schema</td><td>Hibernate multi-tenancy (SCHEMA)</td><td>Dùng cơ chế chuẩn công nghiệp, không tự chế bánh xe.</td></tr>
+    <tr><td>Tạo schema</td><td>Pre-provision từ config</td><td>An toàn cho hệ tài chính: tenant lạ bị từ chối, không tự đẻ schema rác.</td></tr>
+    <tr><td>Mô hình tiền tệ</td><td><b>Ledger bất biến + balance cache</b></td><td>Chuẩn tài chính: lưu lịch sử/đối soát, không sửa lén. Cache để đọc nhanh.</td></tr>
+    <tr><td>Đồng thời</td><td>Optimistic locking (<code>@Version</code>)</td><td>Chặn lost-update khi 2 request cùng sửa 1 ví.</td></tr>
+    <tr><td>Chống lặp</td><td><code>Idempotency-Key</code> (UNIQUE)</td><td>Retry mạng không làm cộng/trừ tiền hai lần.</td></tr>
+    <tr><td>Kiểu dữ liệu tiền</td><td><code>BigDecimal</code></td><td>Không bao giờ dùng <code>double</code>/<code>float</code> — tránh sai số dấu phẩy động.</td></tr>
+    <tr><td>Xác thực service-to-service</td><td><b>HMAC ký request</b> (allowlist service nội bộ)</td><td>Wallet không xác thực <i>người dùng</i> (gateway lo), nhưng phải xác thực <i>service gọi tới mình</i> (zero-trust). HMAC ở tầng app: dạy chữ ký + chống sửa + chống replay.</td></tr>
+    <tr><td>Observability</td><td><b>TraceId</b> (Correlation ID) qua Micrometer + MDC</td><td>Mỗi request một id, in vào mọi dòng log, truyền qua header giữa các service để nối log xuyên suốt. Rẻ, giá trị thật.</td></tr>
+    <tr><td>Resilience (Circuit Breaker)</td><td><b>Hoãn</b> — chưa có outbound call để bảo vệ</td><td>Wallet hiện chỉ nói chuyện với DB của nó → circuit breaker chưa có gì để bọc. Thêm khi có remote call thật (tránh cargo-cult).</td></tr>
+  </table>
+
+  <h2 id="s3"><span class="num">3.</span>Luồng request (Data Flow)</h2>
+  <p>Điểm cốt lõi: <b>code nghiệp vụ KHÔNG biết gì về tenant</b>. Việc định tuyến schema xảy ra ngầm ở tầng hạ tầng.</p>
+<p>Thứ tự các filter rất quan trọng — chặn sớm cái bảo mật trước:</p>
+<pre>curl -H "X-Service-Id: api-gateway" -H "X-Signature: ..." -H "X-Timestamp: ..."
+     -H "X-Tenant-Id: acme" -H "X-Trace-Id: t-789" -H "Idempotency-Key: abc-123"
+     POST /wallets/1/topup {amount:50}
+   |
+   v [1] InternalAuthFilter: "Service nào gọi tao?" -> allowlist + verify HMAC + check timestamp
+   |       Sai chữ ký -> 401 · Không trong allowlist -> 403 · Quá hạn -> 401   (chặn sớm nhất)
+   v [2] TraceIdFilter: đọc X-Trace-Id (không có thì sinh mới) -> nhét vào MDC để log
+   v [3] TenantFilter: đọc X-Tenant-Id -> set vào TenantContext (ThreadLocal)
+   |       try { ... } FINALLY { TenantContext.clear() }  &lt;- bắt buộc, chống rò tenant qua thread tái dùng
+   v [4] Controller -> Service -> (Port) WalletRepository  &lt;- code thuần nghiệp vụ
+   v [5] Hibernate hỏi CurrentTenantResolver -> "acme" -> đổi connection sang schema "acme"
+   v [6] SQL chạy trong schema "acme". Tenant "beta" không thấy dữ liệu.</pre>
+
+  <h2 id="s4"><span class="num">4.</span>Cấu trúc code (Clean Architecture)</h2>
+  <p>Quy tắc phụ thuộc: <b>mũi tên luôn trỏ vào trong</b> (infrastructure → application → domain).</p>
+<pre>com.vng.wallet
+├── domain/                          &lt;- LÕI: thuần Java, KHÔNG import Spring/JPA
+│   ├── Wallet.java                  · model có hành vi: topup(), withdraw()
+│   ├── WalletTransaction.java       · một bút toán bất biến trong sổ cái
+│   ├── WalletRepository.java        · PORT (interface thuần)
+│   ├── WalletNotFoundException.java
+│   └── InsufficientFundsException.java
+│
+├── application/                     &lt;- USE CASES: điều phối, quản lý @Transactional
+│   └── WalletService.java           · createWallet, getWallet, topup, withdraw, listTransactions
+│
+└── infrastructure/                  &lt;- chi tiết kỹ thuật, phụ thuộc vào trong
+    ├── persistence/
+    │   ├── WalletEntity.java            · @Entity JPA (có @Version) — TÁCH khỏi domain
+    │   ├── WalletTransactionEntity.java · @Entity JPA (idempotency_key UNIQUE)
+    │   ├── SpringDataWalletJpa.java     · extends JpaRepository
+    │   └── JpaWalletRepository.java     · ADAPTER: map Entity&lt;->domain
+    ├── security/                     === xác thực service-to-service (HMAC) ===
+    │   ├── InternalAuthFilter.java      · verify HMAC + allowlist + chống replay (chạy ĐẦU TIÊN)
+    │   ├── HmacVerifier.java            · dựng lại canonical, so sánh chữ ký (constant-time)
+    │   └── AllowedServicesConfig.java   · nạp allowlist {serviceId: secret} từ env
+    ├── observability/                === TraceId / Correlation ID ===
+    │   └── TraceIdFilter.java           · đọc/sinh X-Trace-Id, nhét vào MDC để log
+    ├── tenant/                       === toàn bộ cơ chế multi-tenant gói gọn ở đây ===
+    │   ├── TenantContext.java           · ThreadLocal giữ tenant id (+ clear())
+    │   ├── TenantFilter.java            · đọc header, validate, finally->clear
+    │   ├── CurrentTenantResolver.java   · Hibernate CurrentTenantIdentifierResolver
+    │   ├── SchemaConnectionProvider.java· Hibernate MultiTenantConnectionProvider
+    │   └── TenantSchemaInitializer.java · khởi động: tạo schema + bảng cho mỗi tenant
+    └── web/
+        ├── WalletController.java
+        ├── dto/  (CreateWalletRequest, TopupRequest, WithdrawRequest, WalletResponse, ...)
+        └── GlobalExceptionHandler.java</pre>
+  <blockquote class="lesson"><strong>🔑 Nguyên tắc kiểm chứng:</strong> gói <code>domain/</code> phải copy sang project khác vẫn biên dịch được (không dính Spring/JPA). Nếu không, ranh giới đã sai.</blockquote>
+
+  <h2 id="s4b"><span class="num">4b.</span>Bảo mật service-to-service &amp; Observability</h2>
+  <p>Có <b>HAI</b> câu hỏi xác thực khác nhau — đừng gộp:</p>
+  <table>
+    <tr><th>Câu hỏi</th><th>Ai trả lời</th><th>Cơ chế</th></tr>
+    <tr><td>"USER này là ai?"</td><td>API Gateway (ngoài phạm vi)</td><td>Verify JWT người dùng</td></tr>
+    <tr><td>"SERVICE nào đang gọi tôi?"</td><td><b>wallet-service phải tự lo</b></td><td>HMAC service-to-service</td></tr>
+  </table>
+  <p>"Tin gateway" ≠ "tin bất kỳ ai gửi được packet". Đây là tinh thần <b>zero-trust</b>: không tin dựa trên vị trí mạng.</p>
+  <h3>HMAC service-to-service</h3>
+<pre>Caller gửi:  X-Service-Id: api-gateway
+             X-Timestamp:  1749470000
+             X-Signature:  HMAC-SHA256(secret, canonical)
+   canonical = serviceId + "\n" + method + "\n" + path + "\n" + timestamp + "\n" + sha256(body)
+
+InternalAuthFilter verify:
+  1. X-Service-Id có trong ALLOWLIST?           không -> 403 Forbidden
+  2. dựng lại canonical -> tính HMAC -> so sánh (constant-time)   sai -> 401
+  3. |now - X-Timestamp| &lt; 5 phút?              quá hạn -> 401 (chống replay)</pre>
+<pre># application.yml — secret nạp từ env, KHÔNG hardcode
+wallet.internal-auth.allowed-services:
+  api-gateway: "${GATEWAY_HMAC_SECRET}"
+  batch-job:   "${BATCH_HMAC_SECRET}"</pre>
+  <blockquote class="lesson"><strong>🔑 Bài học:</strong> (1) Secret luôn nạp từ env/secret manager. (2) Dùng <b>allowlist</b> (mặc định từ chối), không blocklist. (3) <b>mTLS</b> mạnh hơn nhưng thường thuộc tầng <b>hạ tầng/service mesh</b>, không phải code app — biết ranh giới này là tư duy architect.</blockquote>
+  <h3>TraceId (Correlation ID)</h3>
+  <p><code>TraceIdFilter</code> đọc header <code>X-Trace-Id</code> (không có thì sinh mới), nhét vào <b>MDC</b> để mọi dòng log tự in trace id. Dùng <b>Micrometer Tracing</b> (có sẵn Spring Boot 3); trace id truyền tiếp qua header khi gọi service khác → nối log xuyên suốt. Lõi nghiệp vụ không biết gì về nó.</p>
+
+  <h2 id="s5"><span class="num">5.</span>Mô hình dữ liệu (trong MỖI schema tenant)</h2>
+<pre>wallet                              wallet_transaction (sổ cái, append-only)
+─────────────────────              ──────────────────────────────────────
+id            PK                    id              PK
+owner_name                          wallet_id       FK -> wallet.id
+balance       (cache đọc nhanh)     type            TOPUP | WITHDRAW
+version       (@Version)            amount          BigDecimal (> 0)
+                                    idempotency_key  UNIQUE
+                                    balance_after   BigDecimal
+                                    created_at       timestamp</pre>
+  <p><code>balance</code> trên <code>wallet</code> là bản cache; nguồn sự thật là tổng các bút toán. Mỗi thao tác cập nhật <b>cả hai bảng trong cùng một <code>@Transactional</code></b> — cùng commit hoặc cùng rollback.</p>
+
+  <h2 id="s6"><span class="num">6.</span>API &amp; Xử lý lỗi</h2>
+  <h3>Endpoints (mọi endpoint yêu cầu header <code>X-Tenant-Id</code>)</h3>
+  <table>
+    <tr><th>Method</th><th>Path</th><th>Mô tả</th></tr>
+    <tr><td>POST</td><td><code>/wallets</code></td><td>Tạo ví mới (balance = 0)</td></tr>
+    <tr><td>GET</td><td><code>/wallets/{id}</code></td><td>Xem thông tin + số dư</td></tr>
+    <tr><td>POST</td><td><code>/wallets/{id}/topup</code></td><td>Nạp tiền (cần <code>Idempotency-Key</code>)</td></tr>
+    <tr><td>POST</td><td><code>/wallets/{id}/withdraw</code></td><td>Rút tiền (chặn nếu không đủ)</td></tr>
+    <tr><td>GET</td><td><code>/wallets/{id}/transactions</code></td><td>Xem lịch sử bút toán</td></tr>
+  </table>
+  <h3>Bảng quyết định lỗi → HTTP code</h3>
+  <table>
+    <tr><th>Tình huống</th><th>Exception</th><th>HTTP</th></tr>
+    <tr><td>Chữ ký HMAC sai/thiếu/quá hạn</td><td>InvalidSignatureException</td><td>401</td></tr>
+    <tr><td><code>X-Service-Id</code> không trong allowlist</td><td>ServiceNotAllowedException</td><td>403</td></tr>
+    <tr><td>Thiếu/sai <code>X-Tenant-Id</code></td><td>UnknownTenantException</td><td>400</td></tr>
+    <tr><td>Ví không tồn tại</td><td>WalletNotFoundException</td><td>404</td></tr>
+    <tr><td>Rút quá số dư</td><td>InsufficientFundsException</td><td>422</td></tr>
+    <tr><td>Input sai (amount ≤ 0, ...)</td><td>validation</td><td>400</td></tr>
+    <tr><td>Xung đột version</td><td>OptimisticLockException</td><td>409</td></tr>
+  </table>
+
+  <h2 id="s7"><span class="num">7.</span>Chiến lược kiểm thử</h2>
+<pre>Unit test (nhanh, không cần DB):
+  · Domain Wallet: topup cộng đúng, withdraw chặn khi thiếu tiền, amount âm bị từ chối.
+Service test (mock repository):
+  · WalletService điều phối đúng, không đụng DB thật.
+Integration test (DB thật):
+  · * TENANT ISOLATION: tạo ví ở "acme" -> GET bằng "beta" PHẢI trả 404.
+  · IDEMPOTENCY: gọi topup 2 lần cùng key -> chỉ cộng 1 lần.
+  · CONCURRENCY: 2 topup đồng thời -> không lost update.</pre>
+  <blockquote class="lesson"><strong>🔑 Bài học:</strong> Test quan trọng nhất là <b>tenant isolation</b> — nó là cam kết "tiền khách A không lẫn sang khách B".</blockquote>
+
+  <h2 id="s8"><span class="num">8.</span>Nợ kỹ thuật &amp; những gì CỐ TÌNH bỏ qua (YAGNI)</h2>
+  <div class="card">
+    <p><span class="sev yellow">NỢ KỸ THUẬT</span></p>
+    <ul><li><code>ddl-auto=update</code> chỉ dùng cho giai đoạn học. Production cần <b>Flyway/Liquibase</b> với migration chạy cho <i>từng schema tenant</i>.</li></ul>
+    <p style="margin-top:16px"><span class="sev white">CỐ TÌNH CHƯA LÀM</span></p>
+    <ul>
+      <li>Đa tiền tệ (mỗi ví hiện coi như một loại tiền).</li>
+      <li>Phân trang/lọc lịch sử giao dịch.</li>
+      <li>Auto-provision schema cho tenant lạ (đã chọn pre-provision an toàn hơn).</li>
+      <li>Xác thực JWT <i>người dùng</i> (thuộc gateway; wallet chỉ xác thực <i>service</i> qua HMAC).</li>
+      <li><b>Circuit Breaker</b>: hoãn vì wallet chưa có outbound call để bảo vệ. Thêm khi gọi ra ngoài thật (Resilience4j).</li>
+      <li>Chuyển tiền giữa hai ví (transfer) — có thể là tính năng học tiếp theo.</li>
+    </ul>
+  </div>
+  <blockquote class="lesson"><strong>🧠 Bài học architect lớn nhất:</strong> Junior thấy bug thì muốn thêm <i>mọi thứ</i>. Architect thì <b>phân loại</b>: cái nào là lỗi đúng/sai phải sửa, cái nào là production-grade đáng học, cái nào là YAGNI gây lãng phí. Biết nói <i>"chưa cần cái này"</i> quan trọng ngang biết thêm cái kia.</blockquote>
+
+  <h2 id="s9"><span class="num">9.</span>Lộ trình triển khai đề xuất</h2>
+  <table>
+    <tr><th>#</th><th>Bước</th><th>Khái niệm học được</th></tr>
+    <tr><td>1</td><td>Refactor sang Clean Architecture (từ code Stage 1)</td><td>Ports &amp; Adapters, dependency inversion</td></tr>
+    <tr><td>2</td><td>Ledger + topup/withdraw</td><td>Transaction, optimistic locking, idempotency</td></tr>
+    <tr><td>3</td><td>Multi-tenant (filter, context, schema routing)</td><td>Multi-tenancy, ThreadLocal an toàn</td></tr>
+    <tr><td>4</td><td>Security HMAC + TraceId (đúng thứ tự filter)</td><td>Zero-trust, chữ ký/replay, correlation id</td></tr>
+    <tr><td>5</td><td>Integration test</td><td>Tenant isolation, concurrency, idempotency, chặn chữ ký sai</td></tr>
+    <tr><td>6</td><td>(Tùy chọn) H2 → MySQL qua Docker</td><td>Config, profiles, hạ tầng thật</td></tr>
+  </table>
+
+  <footer>Generated for học tập · wallet-service · 2026-06-09</footer>
+</div>
+</body>
+</html>
