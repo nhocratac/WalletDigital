@@ -23,7 +23,7 @@
     <properties>
         <!-- Compile to Java 21 bytecode (very stable + supported by every library),
              even though we RUN on Java 25. Avoids edge-case compatibility issues. -->
-        <java.version>21</java.version>
+        <java.version>25</java.version>
     </properties>
 
     <dependencies>
