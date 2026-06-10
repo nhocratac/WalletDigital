@@ -1,6 +1,7 @@
 package com.vng.kyc.infrastructure.web;
 
 import com.vng.kyc.domain.InvalidKycTransitionException;
+import com.vng.kyc.domain.KycCaseNotFoundException;
 import com.vng.kyc.domain.SubmissionNotFoundException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
@@ -10,7 +11,6 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import java.util.Map;
-import java.util.NoSuchElementException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -25,9 +25,16 @@ public class GlobalExceptionHandler {
         return body(HttpStatus.NOT_FOUND, ex.getMessage());
     }
 
-    @ExceptionHandler(NoSuchElementException.class)
-    public ResponseEntity<Map<String, String>> notFound(NoSuchElementException ex) {
-        return body(HttpStatus.NOT_FOUND, "Resource not found");
+    @ExceptionHandler(KycCaseNotFoundException.class)
+    public ResponseEntity<Map<String, String>> caseNotFound(KycCaseNotFoundException ex) {
+        return body(HttpStatus.NOT_FOUND, ex.getMessage());
+    }
+
+    @ExceptionHandler(org.springframework.http.converter.HttpMessageNotReadableException.class)
+    public ResponseEntity<Map<String, String>> unreadableBody(
+            org.springframework.http.converter.HttpMessageNotReadableException ex) {
+        // Thông điệp chung chung có chủ đích — không lộ enum constants/class names ra ngoài.
+        return body(HttpStatus.BAD_REQUEST, "Malformed request body");
     }
 
     @ExceptionHandler(OptimisticLockingFailureException.class)

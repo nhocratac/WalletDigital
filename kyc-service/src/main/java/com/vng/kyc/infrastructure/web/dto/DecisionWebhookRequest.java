@@ -5,6 +5,15 @@ import jakarta.validation.constraints.NotNull;
 import com.vng.kyc.domain.KycDecision;
 
 public record DecisionWebhookRequest(@NotBlank String submissionId,
-                                     @NotNull KycDecision.Type decision,
+                                     @NotNull Decision decision,
                                      @NotBlank String decidedBy,
-                                     String reason) {}
+                                     String reason) {
+    /** Enum cục bộ ở boundary webhook — REVOKE không phải decision hợp lệ qua kênh này. */
+    public enum Decision {
+        APPROVE, REJECT;
+
+        public KycDecision.Type toDomain() {
+            return this == APPROVE ? KycDecision.Type.APPROVE : KycDecision.Type.REJECT;
+        }
+    }
+}

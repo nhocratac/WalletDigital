@@ -26,8 +26,11 @@ class KycServiceTest {
     }
 
     static class FakePublisher implements KycEventPublisher {
-        List<String> revokedUsers = new ArrayList<>();
-        public void publishKycRevoked(String userId, String reason) { revokedUsers.add(userId); }
+        record Revoked(String userId, String reason) {}
+        List<Revoked> events = new ArrayList<>();
+        public void publishKycRevoked(String userId, String reason) {
+            events.add(new Revoked(userId, reason));
+        }
     }
 
     private final FakeRepo repo = new FakeRepo();
@@ -89,6 +92,19 @@ class KycServiceTest {
     }
 
     @Test
+    void applyDecision_revokeType_isProgrammerErrorGuard() {
+        String subId = service.submit("user-1", List.of("d"));
+        int decisionsBefore = repo.decisions.size();
+
+        assertThrows(IllegalArgumentException.class,
+                () -> service.applyDecision(subId, KycDecision.Type.REVOKE, "v", "r"));
+
+        assertEquals(decisionsBefore, repo.decisions.size(), "không được ghi decision");
+        assertEquals(KycStatus.PENDING, repo.findByUserId("user-1").orElseThrow().getStatus(),
+                "trạng thái không đổi");
+    }
+
+    @Test
     void revoke_fromApproved_publishesEvent() {
         String subId = service.submit("user-1", List.of("d"));
         service.applyDecision(subId, KycDecision.Type.APPROVE, "v", "ok");
@@ -96,7 +112,8 @@ class KycServiceTest {
         service.revoke("user-1", "compliance-officer", "fraud detected");
 
         assertEquals(KycStatus.REVOKED, repo.findByUserId("user-1").orElseThrow().getStatus());
-        assertEquals(List.of("user-1"), publisher.revokedUsers, "event kyc.revoked phải được phát");
+        assertEquals(List.of(new FakePublisher.Revoked("user-1", "fraud detected")),
+                publisher.events, "event kyc.revoked phải được phát kèm đúng reason");
     }
 
     @Test

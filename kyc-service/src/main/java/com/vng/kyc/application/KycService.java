@@ -1,6 +1,8 @@
 package com.vng.kyc.application;
 
 import com.vng.kyc.domain.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -13,6 +15,8 @@ public class KycService {
 
     /** Kết quả áp một decision — phân biệt APPLIED với 2 loại no-op có chủ đích. */
     public enum DecisionResult { APPLIED, DUPLICATE_IGNORED, STALE_IGNORED }
+
+    private static final Logger log = LoggerFactory.getLogger(KycService.class);
 
     private final KycCaseRepository repository;
     private final KycEventPublisher eventPublisher;
@@ -38,7 +42,12 @@ public class KycService {
                                         String decidedBy, String reason) {
         KycSubmission submission = repository.findSubmission(submissionId)
                 .orElseThrow(() -> new SubmissionNotFoundException(submissionId));
-        KycCase kycCase = repository.findByUserId(submission.userId()).orElseThrow();
+        KycCase kycCase = repository.findByUserId(submission.userId()).orElseThrow(() -> {
+            // Submission tồn tại nhưng case thì không — bất thường về toàn vẹn dữ liệu.
+            log.error("Data integrity anomaly: submission {} exists but no KYC case for user {}",
+                    submissionId, submission.userId());
+            return new KycCaseNotFoundException(submission.userId());
+        });
         if (!submissionId.equals(kycCase.getCurrentSubmissionId())) {
             return DecisionResult.STALE_IGNORED;       // user đã nộp lại — quyết định cũ vô hiệu
         }
@@ -48,7 +57,8 @@ public class KycService {
         switch (type) {
             case APPROVE -> kycCase.approve();
             case REJECT -> kycCase.reject();
-            case REVOKE -> throw new InvalidKycTransitionException(kycCase.getStatus(), "revoke-via-webhook");
+            case REVOKE -> throw new IllegalArgumentException(
+                    "REVOKE cannot be applied as a submission decision; use revoke(userId, ...)");
         }
         repository.saveDecision(new KycDecision(UUID.randomUUID().toString(),
                 submissionId, type, decidedBy, reason, Instant.now()));
@@ -58,7 +68,8 @@ public class KycService {
 
     @Transactional
     public void revoke(String userId, String decidedBy, String reason) {
-        KycCase kycCase = repository.findByUserId(userId).orElseThrow();
+        KycCase kycCase = repository.findByUserId(userId)
+                .orElseThrow(() -> new KycCaseNotFoundException(userId));
         kycCase.revoke(); // chỉ APPROVED -> REVOKED
         // UNIQUE(submission_id) đã giữ chỗ cho decision APPROVE của submission này;
         // bản ghi REVOKE tham chiếu "revoke:<submissionId>" — vẫn truy vết được, vẫn duy nhất.

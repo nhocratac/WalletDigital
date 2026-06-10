@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -33,8 +34,12 @@ class KycIntegrationTest {
 
     private MvcResult signedPost(String path, String body, String serviceId, String secret,
                                  String roles) throws Exception {
+        return signedPostAt(path, body, serviceId, secret, roles, now());
+    }
+
+    private MvcResult signedPostAt(String path, String body, String serviceId, String secret,
+                                   String roles, String ts) throws Exception {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-        String ts = now();
         var req = post(path).contentType(MediaType.APPLICATION_JSON).content(bytes)
                 .header("X-Service-Id", serviceId)
                 .header("X-Timestamp", ts)
@@ -44,8 +49,11 @@ class KycIntegrationTest {
     }
 
     private MvcResult webhookPost(String body) throws Exception {
+        return webhookPostAt(body, now());
+    }
+
+    private MvcResult webhookPostAt(String body, String ts) throws Exception {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-        String ts = now();
         return mockMvc.perform(post("/kyc/webhooks/decision")
                 .contentType(MediaType.APPLICATION_JSON).content(bytes)
                 .header("X-Timestamp", ts)
@@ -130,6 +138,69 @@ class KycIntegrationTest {
                         .header("X-Timestamp", ts)
                         .header("X-Signature", TestSigner.sign("it-internal", "evil-service", "GET", path, ts, new byte[0])))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void webhookRevokeDecision_is400AndLedgerUntouched() throws Exception {
+        String subId = submitAndGetId("user-webhook-revoke");
+
+        // Ký HMAC trên đúng raw bytes như các test khác — 400 chứng tỏ body đã qua auth
+        // và bị từ chối ở bước deserialize, không phải lỗi auth.
+        MvcResult r = webhookPost("{\"submissionId\":\"" + subId
+                + "\",\"decision\":\"REVOKE\",\"decidedBy\":\"v\",\"reason\":\"r\"}");
+        assertEquals(400, r.getResponse().getStatus(), "REVOKE qua webhook phải là 400, không phải 409");
+
+        String path = "/kyc/cases/user-webhook-revoke/status";
+        String ts = now();
+        mockMvc.perform(get(path)
+                        .header("X-Service-Id", "wallet-service")
+                        .header("X-Timestamp", ts)
+                        .header("X-Signature", TestSigner.sign("it-internal", "wallet-service", "GET", path, ts, new byte[0])))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("PENDING"));
+
+        long count = decisionJpa.findAll().stream()
+                .filter(d -> d.getSubmissionId().equals(subId)).count();
+        assertEquals(0, count, "ledger không được ghi gì cho submission này");
+    }
+
+    @Test
+    void staleWebhookTimestamp_is401() throws Exception {
+        String staleTs = Long.toString(Instant.now().getEpochSecond() - 400);
+        MvcResult r = webhookPostAt(
+                "{\"submissionId\":\"x\",\"decision\":\"APPROVE\",\"decidedBy\":\"v\",\"reason\":\"ok\"}",
+                staleTs);
+        assertEquals(401, r.getResponse().getStatus());
+        // Phân biệt với 401 do sai chữ ký:
+        assertTrue(r.getResponse().getContentAsString().contains("Missing or stale signature"));
+    }
+
+    @Test
+    void staleInternalTimestamp_is401() throws Exception {
+        String staleTs = Long.toString(Instant.now().getEpochSecond() - 400);
+        MvcResult r = signedPostAt("/kyc/submissions",
+                "{\"userId\":\"user-stale\",\"documentRefs\":[\"ref-1\"]}",
+                "api-gateway", "it-internal", null, staleTs); // api-gateway trong allowlist -> 401 đến từ freshness
+        assertEquals(401, r.getResponse().getStatus());
+        assertTrue(r.getResponse().getContentAsString().contains("Missing or stale signature"));
+    }
+
+    @Test
+    void missingSignatureHeader_is401() throws Exception {
+        mockMvc.perform(post("/kyc/webhooks/decision")
+                        .contentType(MediaType.APPLICATION_JSON).content("{}".getBytes(StandardCharsets.UTF_8))
+                        .header("X-Timestamp", now()))   // không có X-Signature
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void missingTimestampHeader_internal_is401() throws Exception {
+        byte[] bytes = "{\"userId\":\"u\",\"documentRefs\":[\"r\"]}".getBytes(StandardCharsets.UTF_8);
+        mockMvc.perform(post("/kyc/submissions")
+                        .contentType(MediaType.APPLICATION_JSON).content(bytes)
+                        .header("X-Service-Id", "api-gateway")
+                        .header("X-Signature", "deadbeef"))   // không có X-Timestamp
+                .andExpect(status().isUnauthorized());
     }
 
     @Test

@@ -29,7 +29,7 @@ public class WebhookController {
     @PostMapping("/decision")
     public ResponseEntity<Map<String, String>> decision(@Valid @RequestBody DecisionWebhookRequest req) {
         KycService.DecisionResult result = kycService.applyDecision(
-                req.submissionId(), req.decision(), req.decidedBy(), req.reason());
+                req.submissionId(), req.decision().toDomain(), req.decidedBy(), req.reason());
         if (result != KycService.DecisionResult.APPLIED) {
             log.warn("Webhook no-op: {} for submission {}", result, req.submissionId());
         }
