@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Thiết kế: KYC Service</title>
+<style>
+  :root{--bg:#0f1117;--card:#171a21;--ink:#e6e6e6;--muted:#9aa4b2;--accent:#7c9cff;--accent2:#5be7c4;--line:#2a2f3a;--yellow:#ffd166;--white:#cfd6e4;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;line-height:1.65;font-size:16px;}
+  .wrap{max-width:920px;margin:0 auto;padding:48px 24px 96px}
+  header.hero{background:linear-gradient(135deg,#1b2030,#11141c);border:1px solid var(--line);border-radius:16px;padding:32px;margin-bottom:32px;}
+  header.hero h1{margin:0 0 8px;font-size:30px}
+  .pill{display:inline-block;font-size:12px;padding:4px 10px;border-radius:999px;background:rgba(124,156,255,.15);color:var(--accent);margin:4px 6px 0 0;border:1px solid rgba(124,156,255,.3);}
+  .meta{color:var(--muted);font-size:14px;margin-top:12px}
+  h2{margin:42px 0 14px;font-size:22px;padding-bottom:8px;border-bottom:1px solid var(--line);color:#fff;}
+  h2 .num{color:var(--accent);margin-right:8px}
+  h3{margin:26px 0 10px;font-size:17px;color:var(--accent2)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:16px 0}
+  blockquote{margin:18px 0;padding:14px 18px;border-left:4px solid var(--accent);background:rgba(124,156,255,.08);border-radius:0 10px 10px 0;color:var(--white);}
+  blockquote.lesson{border-left-color:var(--yellow);background:rgba(255,209,102,.08)}
+  blockquote.lesson strong{color:var(--yellow)}
+  pre{background:#0b0d13;border:1px solid var(--line);border-radius:10px;padding:16px;overflow-x:auto;font-size:13px;line-height:1.5;font-family:"SF Mono",Menlo,Consolas,monospace;color:#c8d3e6;}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:14.5px}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:rgba(255,255,255,.04);color:#fff;font-weight:600}
+  code{background:rgba(255,255,255,.07);padding:2px 6px;border-radius:5px;font-size:13.5px;font-family:"SF Mono",Menlo,Consolas,monospace;color:var(--accent2)}
+  ul{padding-left:22px} li{margin:6px 0}
+  .toc{columns:2;column-gap:24px;font-size:14px}
+  .toc a{color:var(--accent);text-decoration:none}
+  footer{margin-top:48px;color:var(--muted);font-size:13px;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <h1>🪪 Thiết kế: KYC Service</h1>
+    <div>
+      <span class="pill">Requirements-first</span>
+      <span class="pill">State Machine</span>
+      <span class="pill">Audit Ledger</span>
+      <span class="pill">Idempotent Webhook</span>
+      <span class="pill">Multi-boundary Auth</span>
+      <span class="pill">AuthN vs AuthZ</span>
+    </div>
+    <div class="meta">📅 2026-06-10 · SP2 trong chuỗi KYC · Tự chạy/test độc lập, chưa cần Kafka</div>
+    <blockquote style="margin-bottom:0">Thiết kế đi từ <b>nhu cầu thực tế</b> (KYC là yêu cầu pháp lý của hệ tài chính), không phải chọn công nghệ trước. Service là <i>hệ quả</i> của nhu cầu.</blockquote>
+  </header>
+
+  <div class="card toc">
+    <a href="#s1">1. Nhu cầu &amp; Ràng buộc</a><br>
+    <a href="#s2">2. Domain &amp; State Machine</a><br>
+    <a href="#s3">3. Actors, Endpoints &amp; Luồng</a><br>
+    <a href="#s4">4. Bảo mật đa biên &amp; Lỗi</a><br>
+    <a href="#s5">5. Kiểm thử</a><br>
+    <a href="#s6">6. Nợ kỹ thuật &amp; YAGNI</a><br>
+    <a href="#s7">7. Lộ trình triển khai</a>
+  </div>
+
+  <h2 id="s1"><span class="num">1.</span>Nhu cầu &amp; Ràng buộc</h2>
+  <table>
+    <tr><th>#</th><th>Yêu cầu đã chốt</th><th>Hệ quả kiến trúc</th></tr>
+    <tr><td>R1</td><td>KYC <b>just-in-time</b>: chặn lần RÚT đầu tiên</td><td>Cổng KYC trên đường rút của wallet</td></tr>
+    <tr><td>R2</td><td>Xác minh <b>bất đồng bộ</b> (nộp → chờ duyệt)</td><td>State machine + webhook</td></tr>
+    <tr><td>R3</td><td>Wallet hỏi KYC <b>sync</b> (compliance cần dữ liệu mới, fail-closed)</td><td><code>GET /kyc/cases/{userId}/status</code></td></tr>
+    <tr><td>R4</td><td>KYC chết không sập đường rút của user đã duyệt</td><td>Breaker fail-closed + cache TTL (SP3)</td></tr>
+    <tr><td>R5</td><td><b>Thu hồi</b> hiệu lực nhanh</td><td>Event <code>kyc.revoked</code> → wallet xoá cache (SP3)</td></tr>
+    <tr><td>R6</td><td><b>Audit trail</b> bất biến (compliance)</td><td>Ledger: Submission + Decision append-only</td></tr>
+    <tr><td>R7</td><td>Verifier retry; user nộp lại sau từ chối</td><td>Webhook idempotent + chống lạc hậu</td></tr>
+  </table>
+  <h3>Phân rã chuỗi KYC</h3>
+<pre>SP1  wallet Stage 2  — ledger + topup/WITHDRAW + idempotency  (tiền đề: phải có "rút" để gác)
+SP2  kyc-service     — TÀI LIỆU NÀY. Tự đứng độc lập.
+SP3  Tích hợp cổng   — wallet gác withdraw: sync + breaker + cache + consume kyc.revoked (Kafka)</pre>
+  <blockquote class="lesson"><strong>🔑 Bài học:</strong> "Eventual consistency tuyệt vời — cho tới khi nó gác <b>tiền</b> và <b>tuân thủ</b>." Chọn nhất quán phải nhìn <i>hậu quả của việc đọc dữ liệu cũ</i>. Và câu hỏi "KYC chết thì sao?" chính là nhu cầu đẻ ra cache + breaker — không phải thêm vì "ngầu".</blockquote>
+
+  <h2 id="s2"><span class="num">2.</span>Domain &amp; State Machine</h2>
+<pre>   (NOT_STARTED)
+        │ submit
+        ▼
+     PENDING ──approve──►  APPROVED ──revoke──► REVOKED ──submit──► PENDING
+        │                                          (nộp lại)
+        └──reject──►  REJECTED ──submit──► PENDING  (nộp lại)</pre>
+  <table>
+    <tr><th>Trạng thái</th><th>Ý nghĩa</th><th>Wallet cho rút?</th></tr>
+    <tr><td><code>NOT_STARTED</code></td><td>Chưa nộp gì</td><td>❌</td></tr>
+    <tr><td><code>PENDING</code></td><td>Đã nộp, chờ duyệt</td><td>❌</td></tr>
+    <tr><td><code>APPROVED</code></td><td>Đã xác minh</td><td>✅</td></tr>
+    <tr><td><code>REJECTED</code></td><td>Bị từ chối (có lý do)</td><td>❌</td></tr>
+    <tr><td><code>REVOKED</code></td><td>Bị thu hồi (gian lận...)</td><td>❌</td></tr>
+  </table>
+  <h3>Mô hình dữ liệu — ledger pattern (giống wallet, vì cùng loại ràng buộc!)</h3>
+<pre>kyc_case                      kyc_submission (BẤT BIẾN)       kyc_decision (BẤT BIẾN)
+─────────────────             ─────────────────────           ───────────────────────
+user_id      PK               id            PK                id             PK
+status       enum             user_id                         submission_id  FK + UNIQUE ◄─ idempotency
+current_submission_id         document_refs                   type   APPROVE|REJECT|REVOKE
+version      (@Version)       submitted_at                    decided_by · reason · decided_at</pre>
+  <p><code>UNIQUE(submission_id)</code> = chốt chặn idempotency Ở TẦNG DB. PII: chỉ giữ <b>refs</b> giấy tờ, không giữ file thật.</p>
+  <h3>Cấu trúc code (Clean Architecture — domain DÀY vì nghiệp vụ thật)</h3>
+<pre>com.vng.kyc
+├── domain/                          &lt;- thuần Java, KHÔNG Spring/JPA
+│   ├── KycCase.java                 · luật transition ÉP TRONG MODEL:
+│   │     submit(): NOT_STARTED/REJECTED/REVOKED → PENDING, else ném
+│   │     approve()/reject(): CHỈ từ PENDING, else ném
+│   │     revoke(): CHỈ APPROVED → REVOKED, else ném
+│   ├── KycSubmission.java · KycDecision.java   (bất biến)
+│   ├── KycStatus.java · KycCaseRepository.java (PORT)
+│   ├── KycEventPublisher.java       · PORT — SP2: no-op/log; SP3: Kafka
+│   └── exceptions
+├── application/KycService.java      · submit, applyDecision, revoke, getStatus
+└── infrastructure/
+    ├── persistence/  ├── security/  ├── events/LoggingKycEventPublisher
+    └── web/</pre>
+  <blockquote class="lesson"><strong>🔑 Bài học:</strong> Luật chuyển trạng thái sống TRONG <code>KycCase</code> (make illegal states unrepresentable), không rải <code>if</code> ở controller. Và để ý: <b>ledger + idempotency xuất hiện ở cả wallet lẫn KYC</b> — cùng loại ràng buộc nghiệp vụ (tiền/tuân thủ + retry + audit) → cùng loại giải pháp.</blockquote>
+
+  <h2 id="s3"><span class="num">3.</span>Actors, Endpoints &amp; Luồng</h2>
+  <table>
+    <tr><th>Actor</th><th>Endpoint</th><th>Auth</th></tr>
+    <tr><td>User (qua gateway)</td><td><code>POST /kyc/submissions</code> → 201 {submissionId}</td><td>HMAC nội bộ (X-User-Id từ JWT)</td></tr>
+    <tr><td>Verifier (NGOÀI hệ)</td><td><code>POST /kyc/webhooks/decision</code></td><td><b>HMAC secret RIÊNG</b> + timestamp</td></tr>
+    <tr><td>wallet-service</td><td><code>GET /kyc/cases/{userId}/status</code></td><td>HMAC nội bộ (allowlist)</td></tr>
+    <tr><td>Compliance/Admin</td><td><code>POST /kyc/cases/{userId}/revoke</code></td><td>HMAC nội bộ + <b>role check</b></td></tr>
+  </table>
+  <h3>Luồng webhook decision (idempotent + chống lạc hậu)</h3>
+<pre>verifier POST {submissionId, decision} + HMAC verifier
+   ▼ verify chữ ký + |now - timestamp| &lt; 5 phút
+   ▼ submission tồn tại?                 không → 404
+   ▼ ĐÃ có decision cho submissionId?    có   → 200 no-op   ◄─ IDEMPOTENT (verifier retry)
+   ▼ submissionId == case.currentSubmissionId?  không → 200 no-op + log warn ◄─ LẠC HẬU (đã nộp lại)
+   ▼ @Transactional: ghi KycDecision + case.approve()/reject()  (@Version optimistic lock)
+   ▼ 200 OK</pre>
+  <h3>Luồng revoke</h3>
+<pre>admin POST /revoke + HMAC nội bộ + role compliance
+   → case.revoke() (chỉ APPROVED→REVOKED) + ghi KycDecision(REVOKE)
+   → KycEventPublisher.publish(kyc.revoked)   ◄─ SP2: log; SP3: Kafka → wallet xoá cache</pre>
+
+  <h2 id="s4"><span class="num">4.</span>Bảo mật đa biên &amp; Xử lý lỗi</h2>
+  <blockquote class="lesson"><strong>🔑 Hai bài học mới:</strong> (1) <b>Secret segmentation</b> — webhook verifier dùng secret RIÊNG: một secret lộ chỉ "cháy" đúng một biên. (2) <b>AuthN ≠ AuthZ</b> — revoke là lần đầu cần <i>authorization</i>: anh là ai chưa đủ, anh có <i>quyền</i> này không?</blockquote>
+  <table>
+    <tr><th>Tình huống</th><th>HTTP</th></tr>
+    <tr><td>HMAC sai/thiếu/hết hạn (mọi biên)</td><td>401</td></tr>
+    <tr><td>Ngoài allowlist / thiếu role compliance</td><td>403</td></tr>
+    <tr><td>Submit khi đang PENDING/APPROVED · Revoke chưa APPROVED · Lock conflict</td><td>409</td></tr>
+    <tr><td>Webhook submission không tồn tại</td><td>404</td></tr>
+    <tr><td>Webhook TRÙNG / LẠC HẬU</td><td><b>200 no-op</b> ◄ mã HTTP webhook là tín hiệu điều khiển retry của đối tác</td></tr>
+    <tr><td>Status user chưa nộp</td><td><b>200 {status: NOT_STARTED}</b> ◄ trạng thái nghiệp vụ hợp lệ, không phải lỗi</td></tr>
+    <tr><td>Input sai</td><td>400</td></tr>
+  </table>
+
+  <h2 id="s5"><span class="num">5.</span>Chiến lược kiểm thử</h2>
+<pre>Tầng 1 — Unit domain: MA TRẬN ĐẦY ĐỦ 5 trạng thái × 4 hành động = 20 test
+  · Test CẢ Ô CẤM — bug compliance là "transition cấm mà đi được"
+Tầng 2 — Service (fake repo + fake publisher):
+  · ⭐ idempotent: cùng submissionId 2 lần → no-op, KHÔNG decision thứ hai
+  · ⭐ lạc hậu: decision của submission cũ → bỏ qua
+  · revoke → fake publisher nhận kyc.revoked (test event KHÔNG cần Kafka — port trả công)
+Tầng 3 — Integration (Spring + H2 + MockMvc):
+  · full flow · resubmit sau REJECTED · auth từng biên (401/403)
+  · ⭐ webhook trùng qua HTTP: 200 cả 2 lần, DB CHỈ CÓ 1 decision (SELECT đếm)
+  · concurrency: 2 webhook đua → optimistic lock, 1 thắng</pre>
+  <blockquote class="lesson"><strong>🔑 Test quan trọng nhất:</strong> "webhook trùng → DB chỉ có đúng 1 decision" — cam kết audit trail sạch và trạng thái không lật 2 lần. Tương đương "tenant isolation" của wallet về độ thiết yếu.</blockquote>
+
+  <h2 id="s6"><span class="num">6.</span>Nợ kỹ thuật &amp; YAGNI</h2>
+  <div class="card">
+    <p><b>Để SP3 / stage sau:</b></p>
+    <ul>
+      <li>Kafka adapter cho <code>KycEventPublisher</code> (giờ: LoggingKycEventPublisher).</li>
+      <li>Cổng withdraw ở wallet (breaker fail-closed + cache TTL + consume revoke).</li>
+      <li>Đẩy hồ sơ sang verifier thật (giờ: verifier giả lập trong test/e2e).</li>
+    </ul>
+    <p><b>Cố tình chưa làm:</b> KYC tiers/hạn mức · lưu file giấy tờ + mã hoá (chỉ refs) · sanctions screening · re-KYC định kỳ · Flyway (nợ chung).</p>
+  </div>
+
+  <h2 id="s7"><span class="num">7.</span>Lộ trình triển khai</h2>
+  <table>
+    <tr><th>#</th><th>Bước</th><th>Khái niệm học được</th></tr>
+    <tr><td>1</td><td>Domain KycCase + ma trận 20 unit test</td><td>State machine, illegal states unrepresentable</td></tr>
+    <tr><td>2</td><td>Submission/Decision + KycService + fake tests</td><td>Ledger, idempotency, stale-guard</td></tr>
+    <tr><td>3</td><td>Persistence (UNIQUE submission_id) + @DataJpaTest</td><td>Idempotency ở tầng DB</td></tr>
+    <tr><td>4</td><td>Security: HMAC nội bộ + verifier riêng + role</td><td>Secret segmentation, AuthN vs AuthZ</td></tr>
+    <tr><td>5</td><td>Web + exception handler + integration tests</td><td>Webhook semantics, auth biên</td></tr>
+    <tr><td>6</td><td>LoggingKycEventPublisher + Done</td><td>Port/adapter cho event</td></tr>
+  </table>
+
+  <footer>Generated for học tập · kyc-service · 2026-06-10</footer>
+</div>
+</body>
+</html>
