@@ -1,5 +1,6 @@
 package com.vng.wallet.application;
 
+import com.vng.wallet.domain.InsufficientFundsException;
 import com.vng.wallet.domain.Wallet;
 import com.vng.wallet.domain.WalletNotFoundException;
 import com.vng.wallet.domain.WalletRepository;
@@ -87,5 +88,51 @@ class WalletServiceTest {
     @Test
     void getWallet_throwsWhenMissing() {
         assertThrows(WalletNotFoundException.class, () -> service.getWallet(999L));
+    }
+
+    @Test
+    void topup_appendsLedgerAndUpdatesBalance() {
+        Wallet w = service.createWallet("Alice");
+
+        WalletTransaction tx = service.topup(w.getId(), new BigDecimal("50.00"), "key-1");
+
+        assertEquals(WalletTransaction.Type.TOPUP, tx.type());
+        assertEquals(0, new BigDecimal("50.00").compareTo(tx.balanceAfter()));
+        assertEquals(0, new BigDecimal("50.00").compareTo(service.getWallet(w.getId()).getBalance()));
+        assertEquals(1, service.listTransactions(w.getId()).size());
+    }
+
+    @Test
+    void topup_sameIdempotencyKeyTwice_appliesOnce() {
+        Wallet w = service.createWallet("Alice");
+        WalletTransaction first = service.topup(w.getId(), new BigDecimal("50.00"), "key-dup");
+
+        WalletTransaction second = service.topup(w.getId(), new BigDecimal("50.00"), "key-dup");
+
+        assertEquals(first.id(), second.id(), "trả lại bút toán CŨ, không tạo mới");
+        assertEquals(0, new BigDecimal("50.00").compareTo(service.getWallet(w.getId()).getBalance()),
+                "balance chỉ cộng MỘT lần");
+        assertEquals(1, service.listTransactions(w.getId()).size());
+    }
+
+    @Test
+    void withdraw_appendsLedger() {
+        Wallet w = service.createWallet("Bob");
+        service.topup(w.getId(), new BigDecimal("100.00"), "k1");
+
+        WalletTransaction tx = service.withdraw(w.getId(), new BigDecimal("30.00"), "k2");
+
+        assertEquals(WalletTransaction.Type.WITHDRAW, tx.type());
+        assertEquals(0, new BigDecimal("70.00").compareTo(tx.balanceAfter()));
+        assertEquals(2, service.listTransactions(w.getId()).size());
+    }
+
+    @Test
+    void withdraw_insufficient_throwsAndNoLedgerEntry() {
+        Wallet w = service.createWallet("Carol");
+
+        assertThrows(InsufficientFundsException.class,
+                () -> service.withdraw(w.getId(), new BigDecimal("1.00"), "k3"));
+        assertEquals(0, service.listTransactions(w.getId()).size(), "thất bại -> KHÔNG có bút toán");
     }
 }
