@@ -60,8 +60,10 @@ public class KycService {
     public void revoke(String userId, String decidedBy, String reason) {
         KycCase kycCase = repository.findByUserId(userId).orElseThrow();
         kycCase.revoke(); // chỉ APPROVED -> REVOKED
+        // UNIQUE(submission_id) đã giữ chỗ cho decision APPROVE của submission này;
+        // bản ghi REVOKE tham chiếu "revoke:<submissionId>" — vẫn truy vết được, vẫn duy nhất.
         repository.saveDecision(new KycDecision(UUID.randomUUID().toString(),
-                kycCase.getCurrentSubmissionId(), KycDecision.Type.REVOKE, decidedBy, reason, Instant.now()));
+                "revoke:" + kycCase.getCurrentSubmissionId(), KycDecision.Type.REVOKE, decidedBy, reason, Instant.now()));
         repository.save(kycCase);
         eventPublisher.publishKycRevoked(userId, reason);
     }
