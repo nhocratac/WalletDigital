@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Thiết kế SP3 — Cổng KYC trên Withdraw</title>
+<style>
+  :root{--bg:#0f1117;--card:#171a21;--ink:#e6e6e6;--muted:#9aa4b2;--accent:#7c9cff;--accent2:#5be7c4;--line:#2a2f3a;--yellow:#ffd166;--white:#cfd6e4;--red:#ff6b6b;--green:#6bd68a;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;line-height:1.65;font-size:16px;}
+  .wrap{max-width:960px;margin:0 auto;padding:48px 24px 96px}
+  header.hero{background:linear-gradient(135deg,#1b2030,#11141c);border:1px solid var(--line);border-radius:16px;padding:32px;margin-bottom:32px;}
+  header.hero h1{margin:0 0 8px;font-size:29px}
+  .pill{display:inline-block;font-size:12px;padding:4px 10px;border-radius:999px;background:rgba(124,156,255,.15);color:var(--accent);margin:4px 6px 0 0;border:1px solid rgba(124,156,255,.3);}
+  .meta{color:var(--muted);font-size:14px;margin-top:12px}
+  h2{margin:42px 0 14px;font-size:22px;padding-bottom:8px;border-bottom:1px solid var(--line);color:#fff;}
+  h2 .num{color:var(--accent);margin-right:8px}
+  h3{margin:26px 0 10px;font-size:17px;color:var(--accent2)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:16px 0}
+  blockquote{margin:18px 0;padding:14px 18px;border-left:4px solid var(--accent);background:rgba(124,156,255,.08);border-radius:0 10px 10px 0;color:var(--white);}
+  blockquote.lesson{border-left-color:var(--yellow);background:rgba(255,209,102,.08)}
+  blockquote.lesson strong{color:var(--yellow)}
+  blockquote.trap{border-left-color:var(--red);background:rgba(255,107,107,.08)}
+  blockquote.trap strong{color:var(--red)}
+  pre{background:#0b0d13;border:1px solid var(--line);border-radius:10px;padding:16px;overflow-x:auto;font-size:13px;line-height:1.5;font-family:"SF Mono",Menlo,Consolas,monospace;color:#c8d3e6;}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:14px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:rgba(255,255,255,.04);color:#fff;font-weight:600}
+  code{background:rgba(255,255,255,.07);padding:2px 6px;border-radius:5px;font-size:13px;font-family:"SF Mono",Menlo,Consolas,monospace;color:var(--accent2)}
+  ul{padding-left:22px} li{margin:6px 0}
+  .toc{columns:2;column-gap:24px;font-size:14px}
+  .toc a{color:var(--accent);text-decoration:none}
+  .badge{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;background:rgba(91,231,196,.15);color:var(--accent2);margin-right:6px}
+  footer{margin-top:48px;color:var(--muted);font-size:13px;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <h1>🔐 SP3 — Cổng KYC trên Withdraw</h1>
+    <div>
+      <span class="pill">Tích hợp 3 service</span>
+      <span class="pill">Circuit Breaker</span>
+      <span class="pill">Cache + Event Invalidation</span>
+      <span class="pill">Kafka</span>
+      <span class="pill">IDOR / AuthZ</span>
+      <span class="pill">Detect &amp; Compensate</span>
+    </div>
+    <div class="meta">📅 2026-06-10 · Sửa wallet-service + kyc-service · Tiền đề: SP1 ✅ SP2 ✅</div>
+    <blockquote style="margin-bottom:0"><b>Nguồn gốc:</b> toàn bộ 9 quyết định cốt lõi do CHÍNH NGƯỜI HỌC suy ra trong phiên brainstorm Socratic. Các con số cấu hình (TTL, ngưỡng breaker) là đề xuất của Claude để duyệt.</blockquote>
+  </header>
+
+  <div class="card toc">
+    <a href="#s1">1. Bối cảnh &amp; Vấn đề</a><br>
+    <a href="#s2">2. Bảng 9 quyết định</a><br>
+    <a href="#s3">3. Định danh &amp; Sở hữu (IDOR)</a><br>
+    <a href="#s4">4. Luồng withdraw &amp; transaction</a><br>
+    <a href="#s5">5. Cổng KYC: cache + breaker</a><br>
+    <a href="#s6">6. Kafka</a><br>
+    <a href="#s7">7. Compensation</a><br>
+    <a href="#s8">8. Hợp đồng lỗi</a><br>
+    <a href="#s9">9. Ma trận tình huống</a><br>
+    <a href="#s10">10. Nợ kỹ thuật &amp; YAGNI</a><br>
+    <a href="#s11">11. Kiểm thử</a><br>
+    <a href="#s12">12. Lộ trình</a>
+  </div>
+
+  <h2 id="s1"><span class="num">1.</span>Bối cảnh &amp; Vấn đề</h2>
+  <p>Yêu cầu gốc R1: <i>user phải KYC APPROVED mới được RÚT; nhận/nạp tự do</i>. SP1 cho wallet lệnh withdraw, SP2 cho kyc-service trả lời status. SP3 nối hai mảnh — và phát hiện wallet <b>thiếu nền tảng định danh</b>: ví không gắn user (chỉ có <code>ownerName</code> — tên hiển thị, không phải khoá) → (a) không có gì để hỏi KYC, (b) lỗ hổng <b>IDOR</b>: ai cũng rút được từ bất kỳ ví nào nếu đoán đúng id.</p>
+<pre>Người dùng ──JWT──► [api-gateway] ──HMAC + X-User-Id──► [wallet-service]
+                                                            │   ▲
+                          GET /kyc/cases/{u}/status (sync,  │   │ cache APPROVED (TTL ngắn)
+                          circuit breaker, timeout 2s)      ▼   │
+                                                        [kyc-service]
+                                                            │ publish khi compliance revoke
+                          Kafka topic kyc.revoked           │
+                [wallet consumer] ◄─────────────────────────┘
+                xoá cache + quét ledger compensation</pre>
+
+  <h2 id="s2"><span class="num">2.</span>Bảng 9 quyết định (từ phiên Socratic)</h2>
+  <table>
+    <tr><th>#</th><th>Quyết định</th><th>Lý do (người học tự suy ra)</th></tr>
+    <tr><td>D1</td><td>Ví gắn <code>userId</code> từ header <code>X-User-Id</code> (gateway bóc từ JWT, ký HMAC) — KHÔNG nhận từ body</td><td><code>ownerName</code> không phải khoá; client tự khai = mạo danh được; cùng pattern <code>X-Tenant-Id</code> đã duyệt.</td></tr>
+    <tr><td>D2</td><td>AuthZ bằng <b>scoped query</b> <code>WHERE user_id = ? AND id = ?</code> cho MỌI truy cập ví</td><td>Quyền sở hữu nằm TRONG truy vấn — không tồn tại đường code lấy nhầm ví; không ai "quên check" được.</td></tr>
+    <tr><td>D3</td><td>Sai chủ → <b>404</b> + <b>audit log</b> WARN nội bộ</td><td>403 xác nhận ví tồn tại → kẻ dò enumerate được. Response cho client ≠ ghi nhận nội bộ.</td></tr>
+    <tr><td>D4</td><td>Gọi KYC <b>NGOÀI</b> transaction DB</td><td>Transaction = chiếm connection pool (~10); HTTP chậm bên trong → pool cạn → cả service chết. <i>No remote calls inside a DB transaction.</i></td></tr>
+    <tr><td>D5</td><td>Khe hở check↔commit: <b>chấp nhận + thu nhỏ (event) + bù (compensation từ ledger)</b></td><td>Bản chất hệ phân tán, không triệt tiêu được. Detect &amp; compensate thay vì prevent — ledger Stage 2 trả công.</td></tr>
+    <tr><td>D6</td><td>Cache <b>CHỈ APPROVED</b>, TTL ngắn; không cache trạng thái âm</td><td>Reversible vs irreversible harm; chiều nguy hiểm được đậy nắp bằng event revoke (cặp khớp nhau); hit-rate cao nhất là user APPROVED; user vừa duyệt rút được NGAY.</td></tr>
+    <tr><td>D7</td><td>KYC nói không → <b>403</b>. Không kiểm được → <b>503 + Retry-After</b></td><td>"Không đủ điều kiện" ≠ "không kiểm được" — mã lỗi là lời hứa ngữ nghĩa. 503 chứ không 504 (breaker mở = còn chẳng gọi). Retry-After là header CHUẨN, không có X-.</td></tr>
+    <tr><td>D8</td><td>Kafka: producer <code>acks=all</code>; consumer group + offset</td><td>Kafka là SỔ BỀN — wallet chết lúc event phát thì event chờ, sống lại đọc tiếp. Khác HTTP bắn-là-mất.</td></tr>
+    <tr><td>D9</td><td>Consumer <b>không cần dedup</b></td><td>"Xoá cache X" là tự nhiên idempotent — xoá 2 lần vô hại. Vác bộ máy dedup vào là over-engineering.</td></tr>
+  </table>
+
+  <h2 id="s3"><span class="num">3.</span>Định danh &amp; Sở hữu (sửa IDOR)</h2>
+  <ul>
+    <li>Bảng <code>wallet</code> thêm <code>user_id NOT NULL</code>; <code>Wallet.createNew(userId, ownerName)</code>; controller đọc <code>X-User-Id</code>.</li>
+    <li>Port đổi: <code>findById(id)</code> → <code>findByIdAndUserId(id, userId)</code> — áp cho <b>cả 4 endpoint</b> (GET ví, topup, withdraw, transactions) vì IDOR hở ở tất cả.</li>
+    <li>Không khớp → <code>WalletNotFoundException</code> (cùng 404 với "không tồn tại") + log <code>AUDIT forbidden-or-missing wallet access: walletId, callerUserId, traceId</code>.</li>
+  </ul>
+  <blockquote class="trap"><strong>⚠️ Giả định tin cậy (nợ tường minh):</strong> <code>X-User-Id</code> hiện được wallet tin mà CHƯA verify HMAC (wallet chưa có InternalAuthFilter — Stage 4 của thiết kế gốc). Biên tin cậy tạm = mạng nội bộ + gateway là cửa duy nhất. Stage 4 mới đạt chuẩn zero-trust.</blockquote>
+
+  <h2 id="s4"><span class="num">4.</span>Luồng withdraw mới &amp; ranh giới transaction</h2>
+<pre>POST /wallets/7/withdraw  (X-User-Id: user-A, Idempotency-Key: k1, amount 50)
+   ▼ [0] Idempotency check (Stage 2): key đã có -> trả bút toán cũ, DỪNG
+   ▼ [1] Scoped load: ví 7 thuộc user-A?   không -> 404 + audit log
+   ▼ [2] ═══ CỔNG KYC — NGOÀI transaction ═══
+   │     cache APPROVED?  có -> qua cổng (không network)
+   │     không -> GET /kyc/cases/user-A/status (breaker, timeout 2s)
+   │          APPROVED -> ghi cache -> qua cổng
+   │          khác     -> 403
+   │          breaker mở / timeout / 5xx -> 503 + Retry-After (fail-closed)
+   ▼ [3] ═══ TRANSACTION DB (ngắn, không network) ═══
+   │     load ví (scoped) -> withdraw(50) -> save (@Version) -> ghi ledger
+   ▼ [4] commit -> response</pre>
+  <blockquote class="trap"><strong>⚠️ Bẫy Spring self-invocation:</strong> gọi method <code>@Transactional</code> từ TRONG cùng class thì proxy không kích hoạt — transaction âm thầm không tồn tại. Giải pháp đề xuất: <b>TransactionTemplate</b> (tường minh) hoặc tách bean ledger riêng. Bài học: ranh giới transaction là quyết định thiết kế, không phải chỗ tiện thì dán annotation.</blockquote>
+
+  <h2 id="s5"><span class="num">5.</span>Cổng KYC — Port &amp; Adapter, Cache, Breaker</h2>
+<pre>wallet-service
+├── domain/
+│   ├── KycGate.java                  · PORT: check(userId) -> ALLOWED | DENIED | UNAVAILABLE
+│   ├── KycNotApprovedException (403) · KycUnavailableException (503)
+├── application/WalletService.java    · withdraw: gate.check() TRƯỚC transaction
+└── infrastructure/
+    ├── kyc/RestKycGate.java          · RestClient + HMAC ký + Resilience4j + cache
+    │      (kyc-service ĐÃ có wallet-service trong allowlist từ SP2)
+    ├── kyc/KycStatusCache.java       · Caffeine: userId -> APPROVED
+    └── messaging/KycRevokedConsumer.java · @KafkaListener: evict + compensation</pre>
+  <h3>Cache (Caffeine) — đề xuất để duyệt</h3>
+  <table>
+    <tr><th>Mục</th><th>Giá trị</th><th>Lý do</th></tr>
+    <tr><td>TTL</td><td><b>60 giây</b></td><td>Giới hạn cửa sổ stale-APPROVED nếu event trục trặc; đủ hấp thụ burst rút tiền</td></tr>
+    <tr><td>Ghi</td><td>CHỈ khi APPROVED</td><td>D6</td></tr>
+    <tr><td>Xoá</td><td>TTL hết · event <code>kyc.revoked</code></td><td>cặp D6+D9</td></tr>
+    <tr><td>Max size</td><td>10.000 (LRU)</td><td>chặn memory leak</td></tr>
+  </table>
+  <blockquote class="trap"><strong>⚠️ Bẫy multi-instance:</strong> Caffeine là cache per-instance. N instance chung MỘT consumer group → Kafka giao event revoke cho MỘT instance → N-1 còn lại ôm cache cũ tới hết TTL! Lối thoát khi scale: (a) <b>consumer group id riêng mỗi instance</b> (broadcast — chọn làm mặc định, rẻ) hoặc (b) Redis dùng chung. SP3 chạy 1 instance nhưng code theo (a) sẵn.</blockquote>
+  <h3>Circuit Breaker (Resilience4j) — đề xuất để duyệt</h3>
+  <table>
+    <tr><th>Tham số</th><th>Giá trị</th><th>Nghĩa</th></tr>
+    <tr><td>slidingWindowSize / failureRateThreshold</td><td>10 / 50%</td><td>≥5/10 lỗi gần nhất → MỞ</td></tr>
+    <tr><td>waitDurationInOpenState / permittedCallsInHalfOpen</td><td>10s / 2</td><td>mở 10s → thăm dò 2 cuộc</td></tr>
+    <tr><td>Timeout gọi KYC</td><td><b>2s</b></td><td>bài học gateway: không timeout = nhánh lỗi không bao giờ chạy</td></tr>
+  </table>
+  <p><b>Fail-closed có cache thoát hiểm:</b> breaker mở ≠ chặn tất cả — user APPROVED còn cache vẫn rút được (thu nhỏ bán kính nổ, đúng lời giải "KYC chết thì sao").</p>
+
+  <h2 id="s6"><span class="num">6.</span>Kafka</h2>
+  <table>
+    <tr><th>Mục</th><th>Giá trị</th><th>Lý do</th></tr>
+    <tr><td>Hạ tầng chạy thật / test</td><td>docker-compose (KRaft, :9092) / <b>EmbeddedKafka</b></td><td>test không cần Docker</td></tr>
+    <tr><td>Topic / Key / Partitions</td><td><code>kyc.revoked</code> / <code>userId</code> / 3</td><td>key=userId → giữ thứ tự theo user</td></tr>
+    <tr><td>Value (JSON)</td><td><code>{userId, reason, revokedAt}</code></td><td><code>revokedAt</code> cần cho compensation scan</td></tr>
+    <tr><td>Producer (kyc-service)</td><td><code>KafkaKycEventPublisher</code> thay Logging adapter; <code>acks=all</code>, idempotent producer</td><td>CHỈ thêm adapter — domain/application SP2 không đổi (port trả công)</td></tr>
+    <tr><td>Consumer (wallet)</td><td><code>@KafkaListener</code>, auto-commit, KHÔNG dedup</td><td>at-least-once + naturally idempotent (D9)</td></tr>
+    <tr><td>Poison message</td><td>log ERROR + bỏ qua</td><td>không retry vô hạn chặn partition; DLT = YAGNI</td></tr>
+  </table>
+  <blockquote class="lesson"><strong>🔑 Hạn chế ghi nhận:</strong> publish SAU DB commit — nếu crash đúng giữa hai bước thì event mất. Lời giải chuẩn là <b>transactional outbox</b> → ghi vào nợ kỹ thuật, chưa làm.</blockquote>
+
+  <h2 id="s7"><span class="num">7.</span>Compensation — quét ledger khi nhận revoke (D5)</h2>
+<pre>1. cache.evict(userId)                       ← chặn rút TIẾP THEO ngay
+2. tìm các ví của userId
+3. ledger WHERE type=WITHDRAW AND created_at >= revokedAt
+4. nếu có -> log WARN "COMPENSATION-ALERT userId=... suspiciousWithdrawals=[...]"</pre>
+  <p>Scope SP3: <b>phát hiện + cảnh báo</b>. Đóng băng ví / bút toán đảo / báo cáo compliance = YAGNI có chủ đích.</p>
+
+  <h2 id="s8"><span class="num">8.</span>Hợp đồng lỗi tổng hợp của withdraw</h2>
+  <table>
+    <tr><th>Tình huống</th><th>HTTP</th></tr>
+    <tr><td>Ví không tồn tại HOẶC không thuộc caller</td><td>404 (+audit log)</td></tr>
+    <tr><td>Thiếu X-User-Id</td><td>400</td></tr>
+    <tr><td>KYC ≠ APPROVED</td><td><b>403</b> kèm <code>status</code> để client hướng dẫn đúng bước</td></tr>
+    <tr><td>Không kiểm được (breaker/timeout) + cache miss</td><td><b>503</b> + <code>Retry-After: 10</code></td></tr>
+    <tr><td>Không đủ tiền / thiếu key / amount xấu / lock conflict</td><td>422 / 400 / 400 / 409 (Stage 2)</td></tr>
+  </table>
+
+  <h2 id="s9"><span class="num">9.</span>Ma trận tình huống (nguồn viết test)</h2>
+  <table>
+    <tr><th>KYC service</th><th>Cache</th><th>User</th><th>Kết quả</th></tr>
+    <tr><td>Sống</td><td>miss</td><td>APPROVED</td><td>✅ rút + ghi cache</td></tr>
+    <tr><td>Sống</td><td>miss</td><td>khác APPROVED</td><td>403, không ghi cache</td></tr>
+    <tr><td>Sống</td><td>hit</td><td>—</td><td>✅ rút, không network call</td></tr>
+    <tr><td><b>Chết (breaker mở)</b></td><td>hit</td><td>—</td><td>✅ rút (cache thoát hiểm)</td></tr>
+    <tr><td><b>Chết (breaker mở)</b></td><td>miss</td><td>—</td><td>503 + Retry-After</td></tr>
+    <tr><td>Chậm &gt; 2s</td><td>miss</td><td>—</td><td>timeout → 503, góp đà mở breaker</td></tr>
+    <tr><td>Sau event revoke</td><td>vừa evict</td><td>REVOKED</td><td>403 + compensation log nếu có giao dịch sau revokedAt</td></tr>
+  </table>
+
+  <h2 id="s10"><span class="num">10.</span>Nợ kỹ thuật &amp; YAGNI</h2>
+  <div class="card">
+    <p><span class="badge">NỢ — có điều kiện tái xét</span></p>
+    <ul>
+      <li><code>X-User-Id</code> chưa verify HMAC tại wallet → wallet Stage 4.</li>
+      <li>Thư viện <code>shared-hmac</code> (canonical đã lặp ở 3 nơi).</li>
+      <li>Transactional outbox cho producer.</li>
+      <li>Redis thay Caffeine khi nhiều instance (hoặc group-per-instance đã chọn sẵn).</li>
+    </ul>
+    <p><span class="badge">YAGNI — cố tình không làm</span></p>
+    <ul>
+      <li>Compensation tự động (freeze/reversal) — chỉ log alert.</li>
+      <li>Dead-letter topic; KYC tiers; gate cho topup (R1: nạp tự do); backfill user_id.</li>
+    </ul>
+  </div>
+
+  <h2 id="s11"><span class="num">11.</span>Chiến lược kiểm thử</h2>
+<pre>Unit (fake KycGate): DENIED->403, UNAVAILABLE->503, ALLOWED->luồng Stage 2 nguyên vẹn;
+                     scoped query: ví người khác -> WalletNotFound
+Adapter (MockWebServer): APPROVED->ALLOWED+cache · PENDING->DENIED+không cache
+                     · 500/timeout liên tiếp -> breaker MỞ (đếm request: không gọi nữa)
+                     · breaker mở + cache hit -> ALLOWED (thoát hiểm)
+Messaging (EmbeddedKafka): revoke -> evict (rút tiếp phải gọi KYC thật)
+                     · event trùng 2 lần -> vô hại · compensation log đúng nội dung
+Integration: full flow submit -> approve -> withdraw OK -> revoke -> withdraw 403
+E2E thật (3 service + docker Kafka): như trên qua gateway với JWT thật
+                     (bài Content-Type: mock dễ tính, chạy thật mới lòi bug)</pre>
+
+  <h2 id="s12"><span class="num">12.</span>Lộ trình triển khai</h2>
+  <table>
+    <tr><th>#</th><th>Bước</th><th>Khái niệm học</th></tr>
+    <tr><td>1</td><td>user_id + X-User-Id + scoped queries + 404 + audit (tự đứng được)</td><td>IDOR, AuthZ, existence hiding</td></tr>
+    <tr><td>2</td><td>Port KycGate + luồng withdraw mới + TransactionTemplate</td><td>Transaction boundary, self-invocation</td></tr>
+    <tr><td>3</td><td>RestKycGate: HMAC + timeout + breaker + Caffeine</td><td>Circuit breaker, cache policy</td></tr>
+    <tr><td>4</td><td>Kafka producer (kyc) + docker-compose + EmbeddedKafka test</td><td>Durable log, acks=all</td></tr>
+    <tr><td>5</td><td>Kafka consumer (wallet): evict + compensation</td><td>At-least-once, natural idempotency</td></tr>
+    <tr><td>6</td><td>Integration + e2e thật theo ma trận mục 9</td><td>Cross-service testing</td></tr>
+  </table>
+
+  <footer>Generated for học tập · SP3 KYC gate · 2026-06-10 · 9 quyết định cốt lõi: của người học 🎓</footer>
+</div>
+</body>
+</html>
