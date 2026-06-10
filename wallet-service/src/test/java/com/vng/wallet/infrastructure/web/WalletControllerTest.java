@@ -3,6 +3,7 @@ package com.vng.wallet.infrastructure.web;
 import com.vng.wallet.application.WalletService;
 import com.vng.wallet.domain.Wallet;
 import com.vng.wallet.domain.WalletRepository;
+import com.vng.wallet.domain.WalletTransaction;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -13,7 +14,12 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -49,6 +55,32 @@ class WalletControllerTest {
                         return Optional.of(new Wallet(1L, "Existing Owner", new BigDecimal("250.00"), 0L));
                     }
                     return Optional.empty();
+                }
+
+                // In-memory ledger đơn giản cho stub.
+                private final List<WalletTransaction> transactions = new ArrayList<>();
+                private final Map<String, WalletTransaction> byKey = new HashMap<>();
+                private final AtomicLong txSeq = new AtomicLong(0);
+
+                @Override
+                public WalletTransaction saveTransaction(WalletTransaction transaction) {
+                    WalletTransaction saved = new WalletTransaction(
+                            transaction.id() != null ? transaction.id() : txSeq.incrementAndGet(),
+                            transaction.walletId(), transaction.type(), transaction.amount(),
+                            transaction.idempotencyKey(), transaction.balanceAfter(), transaction.createdAt());
+                    transactions.add(saved);
+                    byKey.put(saved.idempotencyKey(), saved);
+                    return saved;
+                }
+
+                @Override
+                public Optional<WalletTransaction> findTransactionByIdempotencyKey(String idempotencyKey) {
+                    return Optional.ofNullable(byKey.get(idempotencyKey));
+                }
+
+                @Override
+                public List<WalletTransaction> listTransactions(Long walletId) {
+                    return transactions.stream().filter(t -> t.walletId().equals(walletId)).toList();
                 }
             });
         }

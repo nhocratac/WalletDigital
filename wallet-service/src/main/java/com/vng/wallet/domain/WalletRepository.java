@@ -1,5 +1,6 @@
 package com.vng.wallet.domain;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -9,4 +10,8 @@ import java.util.Optional;
 public interface WalletRepository {
     Wallet save(Wallet wallet);
     Optional<Wallet> findById(Long id);
+
+    WalletTransaction saveTransaction(WalletTransaction transaction);
+    Optional<WalletTransaction> findTransactionByIdempotencyKey(String idempotencyKey);
+    List<WalletTransaction> listTransactions(Long walletId);
 }
