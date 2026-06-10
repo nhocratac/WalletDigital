@@ -23,7 +23,7 @@ class WalletServiceTest {
         @Override
         public Wallet save(Wallet wallet) {
             Long id = wallet.getId() != null ? wallet.getId() : seq.incrementAndGet();
-            Wallet saved = new Wallet(id, wallet.getOwnerName(), wallet.getBalance());
+            Wallet saved = new Wallet(id, wallet.getOwnerName(), wallet.getBalance(), wallet.getVersion());
             store.put(id, saved);
             return saved;
         }

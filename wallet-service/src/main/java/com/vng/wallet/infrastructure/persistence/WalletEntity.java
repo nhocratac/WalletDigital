@@ -20,13 +20,17 @@ public class WalletEntity {
 
     private BigDecimal balance;
 
+    // Optimistic lock — annotation @Version sẽ được gắn ở Task 5.
+    private Long version;
+
     protected WalletEntity() {
     }
 
-    public WalletEntity(Long id, String ownerName, BigDecimal balance) {
+    public WalletEntity(Long id, String ownerName, BigDecimal balance, Long version) {
         this.id = id;
         this.ownerName = ownerName;
         this.balance = balance;
+        this.version = version;
     }
 
     public Long getId() {
@@ -39,5 +43,9 @@ public class WalletEntity {
 
     public BigDecimal getBalance() {
         return balance;
+    }
+
+    public Long getVersion() {
+        return version;
     }
 }

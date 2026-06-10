@@ -39,14 +39,14 @@ class WalletControllerTest {
                 @Override
                 public Wallet save(Wallet wallet) {
                     // Stub: gán id cố định, giữ nguyên ownerName + balance (0 cho ví mới).
-                    return new Wallet(1L, wallet.getOwnerName(), wallet.getBalance());
+                    return new Wallet(1L, wallet.getOwnerName(), wallet.getBalance(), 0L);
                 }
 
                 @Override
                 public Optional<Wallet> findById(Long id) {
                     // Stub: chỉ ví id=1 tồn tại (số dư 250.00); id khác -> rỗng -> 404.
                     if (id == 1L) {
-                        return Optional.of(new Wallet(1L, "Existing Owner", new BigDecimal("250.00")));
+                        return Optional.of(new Wallet(1L, "Existing Owner", new BigDecimal("250.00"), 0L));
                     }
                     return Optional.empty();
                 }
