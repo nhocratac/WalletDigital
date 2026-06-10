@@ -15,4 +15,8 @@ public interface WalletMapper {
     WalletEntity toEntity(Wallet wallet);
 
     Wallet toDomain(WalletEntity entity);
+
+    WalletTransactionEntity toEntity(com.vng.wallet.domain.WalletTransaction tx);
+
+    com.vng.wallet.domain.WalletTransaction toDomain(WalletTransactionEntity entity);
 }

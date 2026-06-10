@@ -16,10 +16,12 @@ import java.util.Optional;
 public class JpaWalletRepository implements WalletRepository {
 
     private final SpringDataWalletJpa jpa;
+    private final SpringDataWalletTransactionJpa txJpa;
     private final WalletMapper mapper;
 
-    public JpaWalletRepository(SpringDataWalletJpa jpa, WalletMapper mapper) {
+    public JpaWalletRepository(SpringDataWalletJpa jpa, SpringDataWalletTransactionJpa txJpa, WalletMapper mapper) {
         this.jpa = jpa;
+        this.txJpa = txJpa;
         this.mapper = mapper;
     }
 
@@ -35,16 +37,16 @@ public class JpaWalletRepository implements WalletRepository {
 
     @Override
     public WalletTransaction saveTransaction(WalletTransaction transaction) {
-        throw new UnsupportedOperationException("Task 5");
+        return mapper.toDomain(txJpa.save(mapper.toEntity(transaction)));
     }
 
     @Override
     public Optional<WalletTransaction> findTransactionByIdempotencyKey(String idempotencyKey) {
-        throw new UnsupportedOperationException("Task 5");
+        return txJpa.findByIdempotencyKey(idempotencyKey).map(mapper::toDomain);
     }
 
     @Override
     public List<WalletTransaction> listTransactions(Long walletId) {
-        throw new UnsupportedOperationException("Task 5");
+        return txJpa.findByWalletIdOrderByCreatedAtAsc(walletId).stream().map(mapper::toDomain).toList();
     }
 }

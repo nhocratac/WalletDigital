@@ -5,6 +5,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 
 import java.math.BigDecimal;
 
@@ -20,7 +21,8 @@ public class WalletEntity {
 
     private BigDecimal balance;
 
-    // Optimistic lock — annotation @Version sẽ được gắn ở Task 5.
+    // Optimistic lock: Hibernate so sánh version khi UPDATE; lệch -> OptimisticLockException.
+    @Version
     private Long version;
 
     protected WalletEntity() {

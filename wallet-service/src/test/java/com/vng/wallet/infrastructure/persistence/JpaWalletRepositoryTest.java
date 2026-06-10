@@ -2,6 +2,7 @@ package com.vng.wallet.infrastructure.persistence;
 
 import com.vng.wallet.domain.Wallet;
 import com.vng.wallet.domain.WalletRepository;
+import com.vng.wallet.domain.WalletTransaction;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
@@ -9,6 +10,7 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 import org.springframework.context.annotation.Import;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -22,6 +24,9 @@ class JpaWalletRepositoryTest {
 
     @Autowired
     private TestEntityManager em;
+
+    @Autowired
+    private SpringDataWalletTransactionJpa txJpa;
 
     @Test
     void saveThenFind_roundTripsThroughDatabase() {
@@ -41,5 +46,35 @@ class JpaWalletRepositoryTest {
     @Test
     void findById_emptyWhenMissing() {
         assertTrue(repository.findById(999L).isEmpty());
+    }
+
+    @Test
+    void transactionRoundTrip_andIdempotencyLookup() {
+        Wallet w = repository.save(Wallet.createNew("Alice"));
+        WalletTransaction tx = repository.saveTransaction(new WalletTransaction(
+                null, w.getId(), WalletTransaction.Type.TOPUP,
+                new BigDecimal("50.00"), "key-abc", new BigDecimal("50.00"), Instant.now()));
+        em.flush(); em.clear();
+
+        assertNotNull(tx.id());
+        var found = repository.findTransactionByIdempotencyKey("key-abc");
+        assertTrue(found.isPresent());
+        assertEquals(tx.id(), found.get().id());
+        assertEquals(0, new BigDecimal("50.00").compareTo(found.get().balanceAfter()));
+        assertEquals(1, repository.listTransactions(w.getId()).size());
+    }
+
+    @Test
+    void duplicateIdempotencyKey_violatesDbConstraint() {
+        Wallet w = repository.save(Wallet.createNew("Bob"));
+        repository.saveTransaction(new WalletTransaction(null, w.getId(),
+                WalletTransaction.Type.TOPUP, BigDecimal.ONE, "dup-key", BigDecimal.ONE, Instant.now()));
+        em.flush(); // ghi bút toán đầu xuống DB trước
+
+        assertThrows(org.springframework.dao.DataIntegrityViolationException.class, () -> {
+            repository.saveTransaction(new WalletTransaction(null, w.getId(),
+                    WalletTransaction.Type.TOPUP, BigDecimal.ONE, "dup-key", BigDecimal.ONE, Instant.now()));
+            txJpa.flush(); // flush qua proxy Spring Data để có exception translation
+        });
     }
 }
