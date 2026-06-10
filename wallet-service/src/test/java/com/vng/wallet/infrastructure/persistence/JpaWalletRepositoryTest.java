@@ -14,7 +14,7 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.*;
 
 @DataJpaTest
-@Import(JpaWalletRepository.class)   // nạp adapter vào test context
+@Import({JpaWalletRepository.class, WalletMapperImpl.class})   // nạp adapter + mapper MapStruct sinh ra vào test context
 class JpaWalletRepositoryTest {
 
     @Autowired

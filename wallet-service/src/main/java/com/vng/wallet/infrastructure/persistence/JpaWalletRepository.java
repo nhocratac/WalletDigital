@@ -7,30 +7,27 @@ import org.springframework.stereotype.Repository;
 import java.util.Optional;
 
 /**
- * ADAPTER — cài đặt PORT domain bằng JPA. Đây là "cầu nối" map giữa
- * domain Wallet (thuần) và WalletEntity (JPA). Lõi nghiệp vụ không thấy JPA.
+ * ADAPTER — cài đặt PORT domain bằng JPA. Mapping entity<->domain do MapStruct
+ * sinh lúc compile (WalletMapper). Lõi nghiệp vụ không thấy JPA.
  */
 @Repository
 public class JpaWalletRepository implements WalletRepository {
 
     private final SpringDataWalletJpa jpa;
+    private final WalletMapper mapper;
 
-    public JpaWalletRepository(SpringDataWalletJpa jpa) {
+    public JpaWalletRepository(SpringDataWalletJpa jpa, WalletMapper mapper) {
         this.jpa = jpa;
+        this.mapper = mapper;
     }
 
     @Override
     public Wallet save(Wallet wallet) {
-        WalletEntity entity = new WalletEntity(wallet.getId(), wallet.getOwnerName(), wallet.getBalance());
-        return toDomain(jpa.save(entity));
+        return mapper.toDomain(jpa.save(mapper.toEntity(wallet)));
     }
 
     @Override
     public Optional<Wallet> findById(Long id) {
-        return jpa.findById(id).map(this::toDomain);
-    }
-
-    private Wallet toDomain(WalletEntity e) {
-        return new Wallet(e.getId(), e.getOwnerName(), e.getBalance());
+        return jpa.findById(id).map(mapper::toDomain);
     }
 }
