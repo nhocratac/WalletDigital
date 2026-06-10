@@ -50,10 +50,23 @@ class JpaKycCaseRepositoryTest {
         repository.saveDecision(new KycDecision("dec-1", "sub-1", KycDecision.Type.APPROVE, "v", "ok", Instant.now()));
         em.flush();
 
-        // UNIQUE(submission_id) là chốt chặn idempotency Ở TẦNG DB
+        // UNIQUE(submission_id, type) là chốt chặn idempotency Ở TẦNG DB
         assertThrows(DataIntegrityViolationException.class, () -> {
-            repository.saveDecision(new KycDecision("dec-2", "sub-1", KycDecision.Type.REJECT, "v", "x", Instant.now()));
+            repository.saveDecision(new KycDecision("dec-2", "sub-1", KycDecision.Type.APPROVE, "v", "x", Instant.now()));
             decisionJpa.flush(); // flush qua proxy Spring Data để có exception translation
         });
+    }
+
+    @Test
+    void revokeDecisionForSameSubmission_isAllowedByCompositeConstraint() {
+        repository.saveDecision(new KycDecision("dec-1", "sub-1", KycDecision.Type.APPROVE, "v", "ok", Instant.now()));
+        em.flush();
+
+        // Hợp đồng mới: REVOKE cho cùng submission là hợp lệ (khác type)
+        repository.saveDecision(new KycDecision("dec-2", "sub-1", KycDecision.Type.REVOKE, "c", "fraud", Instant.now()));
+        decisionJpa.flush();
+
+        assertEquals(2, decisionJpa.findAll().stream()
+                .filter(d -> d.getSubmissionId().equals("sub-1")).count());
     }
 }

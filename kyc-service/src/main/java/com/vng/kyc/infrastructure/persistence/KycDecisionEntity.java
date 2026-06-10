@@ -5,7 +5,10 @@ import java.time.Instant;
 
 @Entity
 @Table(name = "kyc_decision",
-       uniqueConstraints = @UniqueConstraint(columnNames = "submissionId")) // idempotency tầng DB
+       // Idempotency tầng DB theo (submission, type); loại trừ chéo APPROVE vs REJECT
+       // do state machine của KycCase + @Version optimistic lock trên kyc_case
+       // trong cùng transaction đảm nhiệm.
+       uniqueConstraints = @UniqueConstraint(columnNames = {"submissionId", "type"}))
 public class KycDecisionEntity {
     @Id
     private String id;

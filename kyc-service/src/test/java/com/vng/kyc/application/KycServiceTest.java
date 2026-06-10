@@ -77,12 +77,14 @@ class KycServiceTest {
         String oldSub = service.submit("user-1", List.of("d1"));
         service.applyDecision(oldSub, KycDecision.Type.REJECT, "v", "blurry photo");
         String newSub = service.submit("user-1", List.of("d2")); // resubmit -> PENDING
+        int decisionsBefore = repo.decisions.size();
 
         KycService.DecisionResult r = service.applyDecision(oldSub, KycDecision.Type.APPROVE, "v", "late");
 
         assertEquals(KycService.DecisionResult.STALE_IGNORED, r);
         assertEquals(KycStatus.PENDING, repo.findByUserId("user-1").orElseThrow().getStatus(), "submission cũ không có hiệu lực");
         assertEquals(newSub, repo.findByUserId("user-1").orElseThrow().getCurrentSubmissionId());
+        assertEquals(decisionsBefore, repo.decisions.size(), "không được ghi decision cho submission cũ");
     }
 
     @Test

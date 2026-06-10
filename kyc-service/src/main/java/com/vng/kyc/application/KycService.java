@@ -71,10 +71,8 @@ public class KycService {
         KycCase kycCase = repository.findByUserId(userId)
                 .orElseThrow(() -> new KycCaseNotFoundException(userId));
         kycCase.revoke(); // chỉ APPROVED -> REVOKED
-        // UNIQUE(submission_id) đã giữ chỗ cho decision APPROVE của submission này;
-        // bản ghi REVOKE tham chiếu "revoke:<submissionId>" — vẫn truy vết được, vẫn duy nhất.
         repository.saveDecision(new KycDecision(UUID.randomUUID().toString(),
-                "revoke:" + kycCase.getCurrentSubmissionId(), KycDecision.Type.REVOKE, decidedBy, reason, Instant.now()));
+                kycCase.getCurrentSubmissionId(), KycDecision.Type.REVOKE, decidedBy, reason, Instant.now()));
         repository.save(kycCase);
         eventPublisher.publishKycRevoked(userId, reason);
     }

@@ -52,7 +52,10 @@ public class JpaKycCaseRepository implements KycCaseRepository {
 
     @Override
     public KycDecision saveDecision(KycDecision d) {
-        decisionJpa.save(new KycDecisionEntity(
+        // saveAndFlush: ép vi phạm UNIQUE nổi lên NGAY TRONG transaction (đã được Spring
+        // translate thành DataIntegrityViolationException) thay vì lúc commit — nơi nó có thể
+        // bị bọc trong TransactionSystemException và lọt qua mọi catch ở tầng trên.
+        decisionJpa.saveAndFlush(new KycDecisionEntity(
                 d.id(), d.submissionId(), d.type(), d.decidedBy(), d.reason(), d.decidedAt()));
         return d;
     }

@@ -37,7 +37,11 @@ public class InternalAuthFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                                     FilterChain chain) throws ServletException, IOException {
-        CachedBodyRequest cached = new CachedBodyRequest(request);
+        long max = props.getMaxBodyBytes();
+        if (request.getContentLengthLong() > max) { write(response, 413, "Body too large"); return; }
+        CachedBodyRequest cached;
+        try { cached = new CachedBodyRequest(request, max); }
+        catch (CachedBodyRequest.BodyTooLargeException e) { write(response, 413, "Body too large"); return; }
         String serviceId = cached.getHeader("X-Service-Id");
         String timestamp = cached.getHeader("X-Timestamp");
         String signature = cached.getHeader("X-Signature");

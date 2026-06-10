@@ -42,6 +42,13 @@ public class GlobalExceptionHandler {
         return body(HttpStatus.CONFLICT, "Concurrent update, please retry");
     }
 
+    @ExceptionHandler(org.springframework.dao.DataIntegrityViolationException.class)
+    public ResponseEntity<Map<String, String>> integrityConflict(
+            org.springframework.dao.DataIntegrityViolationException ex) {
+        // Lưới an toàn cho race duplicate-PK/UNIQUE — thông điệp chung, không lộ schema.
+        return body(HttpStatus.CONFLICT, "Concurrent update, please retry");
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Map<String, String>> validation(MethodArgumentNotValidException ex) {
         String msg = ex.getBindingResult().getFieldError() != null

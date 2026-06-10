@@ -5,16 +5,27 @@ import jakarta.servlet.ServletInputStream;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletRequestWrapper;
 
+import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 
-/** Đọc body một lần, cho phép downstream đọc lại (body cần cho cả HMAC hash lẫn @RequestBody). */
+/** Đọc body một lần (có chặn kích thước), cho phép downstream đọc lại (body cần cho cả HMAC hash lẫn @RequestBody). */
 public class CachedBodyRequest extends HttpServletRequestWrapper {
+
+    /** Body vượt quá giới hạn cho phép — caller dịch thành 413. */
+    public static class BodyTooLargeException extends IOException {}
+
     private final byte[] body;
 
-    public CachedBodyRequest(HttpServletRequest request) throws IOException {
+    public CachedBodyRequest(HttpServletRequest request, long maxBytes) throws IOException {
         super(request);
-        this.body = request.getInputStream().readAllBytes();
+        // Đọc có giới hạn: chặn cả request chunked/không Content-Length.
+        byte[] data = request.getInputStream().readNBytes((int) maxBytes + 1);
+        if (data.length > maxBytes) throw new BodyTooLargeException();
+        this.body = data;
     }
 
     public byte[] getBody() { return body; }
@@ -28,5 +39,16 @@ public class CachedBodyRequest extends HttpServletRequestWrapper {
             public boolean isReady() { return true; }
             public void setReadListener(ReadListener l) {}
         };
+    }
+
+    @Override
+    public BufferedReader getReader() {
+        Charset cs = StandardCharsets.UTF_8;
+        String enc = getCharacterEncoding();
+        if (enc != null) {
+            // Charset.forName với input do client kiểm soát (Content-Type) — nuốt lỗi để không thành 500.
+            try { cs = Charset.forName(enc); } catch (Exception ignored) {}
+        }
+        return new BufferedReader(new InputStreamReader(getInputStream(), cs));
     }
 }

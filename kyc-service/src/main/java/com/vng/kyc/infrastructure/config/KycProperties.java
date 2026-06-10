@@ -10,6 +10,7 @@ public class KycProperties {
     private String verifierHmacSecret;   // secret RIÊNG cho webhook — secret segmentation
     private List<String> allowedServices;
     private String revokeRole = "compliance";
+    private long maxBodyBytes = 1_048_576; // 1MB — chặn buffer body không xác thực quá lớn
 
     public String getInternalHmacSecret() { return internalHmacSecret; }
     public void setInternalHmacSecret(String v) { this.internalHmacSecret = v; }
@@ -19,4 +20,6 @@ public class KycProperties {
     public void setAllowedServices(List<String> v) { this.allowedServices = v; }
     public String getRevokeRole() { return revokeRole; }
     public void setRevokeRole(String v) { this.revokeRole = v; }
+    public long getMaxBodyBytes() { return maxBodyBytes; }
+    public void setMaxBodyBytes(long v) { this.maxBodyBytes = v; }
 }

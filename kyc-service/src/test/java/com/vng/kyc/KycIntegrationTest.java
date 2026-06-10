@@ -70,6 +70,17 @@ class KycIntegrationTest {
         return json.replaceAll(".*\"submissionId\":\"([^\"]+)\".*", "$1");
     }
 
+    private void assertCaseStatus(String userId, String expected) throws Exception {
+        String path = "/kyc/cases/" + userId + "/status";
+        String ts = now();
+        mockMvc.perform(get(path)
+                        .header("X-Service-Id", "wallet-service")
+                        .header("X-Timestamp", ts)
+                        .header("X-Signature", TestSigner.sign("it-internal", "wallet-service", "GET", path, ts, new byte[0])))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value(expected));
+    }
+
     @Test
     void fullFlow_submitApproveStatus() throws Exception {
         String subId = submitAndGetId("user-flow");
@@ -117,16 +128,49 @@ class KycIntegrationTest {
     @Test
     void revokeWithoutComplianceRole_is403() throws Exception {
         String subId = submitAndGetId("user-revoke");
-        webhookPost("{\"submissionId\":\"" + subId
-                + "\",\"decision\":\"APPROVE\",\"decidedBy\":\"v\",\"reason\":\"ok\"}");
+        assertEquals(200, webhookPost("{\"submissionId\":\"" + subId
+                + "\",\"decision\":\"APPROVE\",\"decidedBy\":\"v\",\"reason\":\"ok\"}")
+                .getResponse().getStatus());
 
         MvcResult noRole = signedPost("/kyc/cases/user-revoke/revoke",
                 "{\"reason\":\"fraud\"}", "api-gateway", "it-internal", null);
         assertEquals(403, noRole.getResponse().getStatus());
+        assertCaseStatus("user-revoke", "APPROVED"); // filter chặn TRƯỚC khi tới service
 
         MvcResult withRole = signedPost("/kyc/cases/user-revoke/revoke",
                 "{\"reason\":\"fraud\"}", "api-gateway", "it-internal", "compliance");
         assertEquals(200, withRole.getResponse().getStatus());
+        assertCaseStatus("user-revoke", "REVOKED"); // transition APPROVED -> REVOKED đã persist
+    }
+
+    @Test
+    void staleDecisionWebhook_returns200StaleIgnored_andIsFullNoOp() throws Exception {
+        String oldSub = submitAndGetId("user-stale-decision");
+
+        // First decision applies: REJECT -> case REJECTED, 1 ledger row for oldSub
+        MvcResult reject = webhookPost("{\"submissionId\":\"" + oldSub
+                + "\",\"decision\":\"REJECT\",\"decidedBy\":\"v\",\"reason\":\"blurry\"}");
+        assertEquals(200, reject.getResponse().getStatus());
+
+        // Resubmit (legal from REJECTED) -> PENDING, currentSubmissionId = newSub
+        String newSub = submitAndGetId("user-stale-decision");
+
+        // Replay decision for the OLD submission -> 200 + STALE_IGNORED (not DUPLICATE_IGNORED,
+        // pins the stale-before-duplicate check ordering in KycService.applyDecision)
+        MvcResult stale = webhookPost("{\"submissionId\":\"" + oldSub
+                + "\",\"decision\":\"APPROVE\",\"decidedBy\":\"v\",\"reason\":\"late\"}");
+        assertEquals(200, stale.getResponse().getStatus(),
+                "stale decision must be 200 — 4xx would make verifier retry forever");
+        assertTrue(stale.getResponse().getContentAsString().contains("STALE_IGNORED"));
+
+        // End-to-end no-op: status stays PENDING for the new submission
+        assertCaseStatus("user-stale-decision", "PENDING");
+
+        // Ledger: exactly the original REJECT for oldSub, nothing for newSub
+        assertEquals(1, decisionJpa.findAll().stream()
+                .filter(d -> d.getSubmissionId().equals(oldSub)).count());
+        assertEquals(0, decisionJpa.findAll().stream()
+                .filter(d -> d.getSubmissionId().equals(newSub)).count());
     }
 
     @Test
@@ -201,6 +245,30 @@ class KycIntegrationTest {
                         .header("X-Service-Id", "api-gateway")
                         .header("X-Signature", "deadbeef"))   // không có X-Timestamp
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void internalRequestWithWrongSecret_is401() throws Exception {
+        // allowlisted service + fresh timestamp, but signed with the VERIFIER secret (cross-boundary confusion)
+        MvcResult r = signedPost("/kyc/submissions",
+                "{\"userId\":\"user-wrong-secret\",\"documentRefs\":[\"ref-1\"]}",
+                "api-gateway", "it-verifier", null);
+        assertEquals(401, r.getResponse().getStatus());
+        assertTrue(r.getResponse().getContentAsString().contains("Invalid signature")); // distinguishes from freshness 401
+    }
+
+    @Test
+    void webhookSignedWithInternalSecret_is401() throws Exception {
+        // mirror case: secrets must not be interchangeable across boundaries
+        byte[] bytes = "{}".getBytes(StandardCharsets.UTF_8);
+        String ts = now();
+        MvcResult r = mockMvc.perform(post("/kyc/webhooks/decision")
+                .contentType(MediaType.APPLICATION_JSON).content(bytes)
+                .header("X-Timestamp", ts)
+                .header("X-Signature", TestSigner.sign("it-internal", "verifier", "POST",
+                        "/kyc/webhooks/decision", ts, bytes))).andReturn();
+        assertEquals(401, r.getResponse().getStatus());
+        assertTrue(r.getResponse().getContentAsString().contains("Invalid signature"));
     }
 
     @Test
