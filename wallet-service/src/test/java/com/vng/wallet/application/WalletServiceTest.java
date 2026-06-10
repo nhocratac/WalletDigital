@@ -7,6 +7,10 @@ import com.vng.wallet.domain.WalletNotFoundException;
 import com.vng.wallet.domain.WalletRepository;
 import com.vng.wallet.domain.WalletTransaction;
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.AbstractPlatformTransactionManager;
+import org.springframework.transaction.support.DefaultTransactionStatus;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -64,7 +68,16 @@ class WalletServiceTest {
         private final AtomicLong txSeq = new AtomicLong(0);
     }
 
-    private final WalletService service = new WalletService(new InMemoryWalletRepository());
+    /** No-op PlatformTransactionManager — giữ unit test Spring-context-free. */
+    static class NoopTransactionManager extends AbstractPlatformTransactionManager {
+        @Override protected Object doGetTransaction() { return new Object(); }
+        @Override protected void doBegin(Object transaction, TransactionDefinition definition) {}
+        @Override protected void doCommit(DefaultTransactionStatus status) {}
+        @Override protected void doRollback(DefaultTransactionStatus status) {}
+    }
+
+    private final WalletService service = new WalletService(
+            new InMemoryWalletRepository(), new TransactionTemplate(new NoopTransactionManager()));
 
     @Test
     void createWallet_savesWithZeroBalanceAndId() {

@@ -17,8 +17,10 @@ public class WalletTransactionEntity {
     private Long walletId;
     @Enumerated(EnumType.STRING)
     private WalletTransaction.Type type;
+    @Column(precision = 38, scale = 2) // chốt scale tiền tệ tường minh (khớp NUMERIC(38,2) hiện tại)
     private BigDecimal amount;
     private String idempotencyKey;
+    @Column(precision = 38, scale = 2)
     private BigDecimal balanceAfter;
     private Instant createdAt;
 

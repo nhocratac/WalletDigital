@@ -1,5 +1,6 @@
 package com.vng.wallet.infrastructure.persistence;
 
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -19,6 +20,7 @@ public class WalletEntity {
 
     private String ownerName;
 
+    @Column(precision = 38, scale = 2) // chốt scale tiền tệ tường minh (khớp NUMERIC(38,2) hiện tại)
     private BigDecimal balance;
 
     // Optimistic lock: Hibernate so sánh version khi UPDATE; lệch -> OptimisticLockException.

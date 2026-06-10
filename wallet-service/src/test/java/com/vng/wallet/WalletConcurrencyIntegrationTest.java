@@ -88,4 +88,67 @@ class WalletConcurrencyIntegrationTest {
         assertEquals(successCount.get(), withdrawRows,
                 "ledger WITHDRAW rows phải bằng số lần thành công (không có dòng từ transaction rollback)");
     }
+
+    @Test
+    void concurrentTopups_sameIdempotencyKey_allCallersGetWinnerTransaction() throws Exception {
+        Wallet wallet = walletService.createWallet("SameKeySam");
+        long walletId = wallet.getId();
+        String key = "same-key-race";
+        BigDecimal amount = new BigDecimal("25.00");
+
+        int n = 8;
+        ExecutorService pool = Executors.newFixedThreadPool(n);
+        CountDownLatch start = new CountDownLatch(1);
+        CountDownLatch done = new CountDownLatch(n);
+        List<WalletTransaction> results = new CopyOnWriteArrayList<>();
+        List<Throwable> failures = new CopyOnWriteArrayList<>();
+
+        for (int i = 0; i < n; i++) {
+            pool.submit(() -> {
+                try {
+                    start.await();
+                    results.add(walletService.topup(walletId, amount, key));
+                } catch (Throwable t) {
+                    failures.add(t);
+                } finally {
+                    done.countDown();
+                }
+            });
+        }
+        start.countDown();
+        assertTrue(done.await(30, TimeUnit.SECONDS), "workers phai hoan thanh trong 30s");
+        pool.shutdown();
+
+        // (a) khong exception nao thoat ra (DIVE phai duoc recovery thanh winner replay)
+        assertTrue(failures.isEmpty(), "khong caller nao duoc fail, gap: " + failures);
+        assertEquals(n, results.size());
+        long distinctIds = results.stream().map(WalletTransaction::id).distinct().count();
+        assertEquals(1, distinctIds, "moi caller phai nhan CUNG MOT but toan (winner replay)");
+
+        // (b) dung 1 dong ledger cho key nay
+        long rows = txJpa.findAll().stream()
+                .filter(t -> t.getIdempotencyKey().equals(key)).count();
+        assertEquals(1, rows, "DB chi co dung 1 but toan cho key nay");
+
+        // (c) balance chi cong MOT lan
+        assertEquals(0, amount.compareTo(walletService.getWallet(walletId).getBalance()),
+                "balance phai phan anh dung MOT lan ap dung");
+    }
+
+    @Test
+    void reuseIdempotencyKey_differentPayload_throwsConflict() {
+        Wallet wallet = walletService.createWallet("ConflictCindy");
+        long walletId = wallet.getId();
+        walletService.topup(walletId, new BigDecimal("40.00"), "reuse-key");
+
+        // khac amount
+        assertThrows(com.vng.wallet.domain.IdempotencyKeyConflictException.class,
+                () -> walletService.topup(walletId, new BigDecimal("41.00"), "reuse-key"));
+        // khac type
+        assertThrows(com.vng.wallet.domain.IdempotencyKeyConflictException.class,
+                () -> walletService.withdraw(walletId, new BigDecimal("40.00"), "reuse-key"));
+
+        assertEquals(0, new BigDecimal("40.00").compareTo(walletService.getWallet(walletId).getBalance()),
+                "balance KHONG doi khi key conflict");
+    }
 }

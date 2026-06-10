@@ -12,6 +12,10 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.AbstractPlatformTransactionManager;
+import org.springframework.transaction.support.DefaultTransactionStatus;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -39,6 +43,16 @@ class WalletControllerTest {
      */
     @TestConfiguration
     static class TestStubConfig {
+        /** No-op transaction manager — @WebMvcTest không có PlatformTransactionManager thật. */
+        static TransactionTemplate noopTxTemplate() {
+            return new TransactionTemplate(new AbstractPlatformTransactionManager() {
+                @Override protected Object doGetTransaction() { return new Object(); }
+                @Override protected void doBegin(Object transaction, TransactionDefinition definition) {}
+                @Override protected void doCommit(DefaultTransactionStatus status) {}
+                @Override protected void doRollback(DefaultTransactionStatus status) {}
+            });
+        }
+
         @Bean
         WalletService walletService() {
             return new WalletService(new WalletRepository() {
@@ -86,7 +100,7 @@ class WalletControllerTest {
                 public List<WalletTransaction> listTransactions(Long walletId) {
                     return transactions.stream().filter(t -> t.walletId().equals(walletId)).toList();
                 }
-            });
+            }, noopTxTemplate());
         }
     }
 

@@ -1,15 +1,12 @@
 package com.vng.wallet.infrastructure.web;
 
 import com.vng.wallet.application.WalletService;
-import com.vng.wallet.domain.IdempotencyKeyConflictException;
 import com.vng.wallet.domain.Wallet;
-import com.vng.wallet.domain.WalletTransaction;
 import com.vng.wallet.infrastructure.web.dto.CreateWalletRequest;
 import com.vng.wallet.infrastructure.web.dto.MoneyRequest;
 import com.vng.wallet.infrastructure.web.dto.TransactionResponse;
 import com.vng.wallet.infrastructure.web.dto.WalletResponse;
 import jakarta.validation.Valid;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -41,37 +38,14 @@ public class WalletController {
     public TransactionResponse topup(@PathVariable Long id,
                                      @RequestHeader("Idempotency-Key") String idempotencyKey,
                                      @Valid @RequestBody MoneyRequest request) {
-        String key = requireIdempotencyKey(idempotencyKey);
-        try {
-            return TransactionResponse.from(walletService.topup(id, request.amount(), key));
-        } catch (DataIntegrityViolationException e) {
-            // Same-key race: thua cuộc -> trả lại bút toán của người thắng (idempotent recovery)
-            WalletTransaction winner = walletService.findTransactionByKey(key)
-                    .orElseThrow(() -> e); // winner rolled back -> rethrow -> controlled 409
-            if (!winner.walletId().equals(id) || winner.type() != WalletTransaction.Type.TOPUP
-                    || winner.amount().compareTo(request.amount()) != 0) {
-                throw new IdempotencyKeyConflictException(key); // 422
-            }
-            return TransactionResponse.from(winner);
-        }
+        return TransactionResponse.from(walletService.topup(id, request.amount(), requireIdempotencyKey(idempotencyKey)));
     }
 
     @PostMapping("/{id}/withdraw")
     public TransactionResponse withdraw(@PathVariable Long id,
                                         @RequestHeader("Idempotency-Key") String idempotencyKey,
                                         @Valid @RequestBody MoneyRequest request) {
-        String key = requireIdempotencyKey(idempotencyKey);
-        try {
-            return TransactionResponse.from(walletService.withdraw(id, request.amount(), key));
-        } catch (DataIntegrityViolationException e) {
-            WalletTransaction winner = walletService.findTransactionByKey(key)
-                    .orElseThrow(() -> e); // winner rolled back -> rethrow -> controlled 409
-            if (!winner.walletId().equals(id) || winner.type() != WalletTransaction.Type.WITHDRAW
-                    || winner.amount().compareTo(request.amount()) != 0) {
-                throw new IdempotencyKeyConflictException(key); // 422
-            }
-            return TransactionResponse.from(winner);
-        }
+        return TransactionResponse.from(walletService.withdraw(id, request.amount(), requireIdempotencyKey(idempotencyKey)));
     }
 
     private static String requireIdempotencyKey(String key) {

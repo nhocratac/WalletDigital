@@ -139,6 +139,13 @@ class WalletLedgerIntegrationTest {
     }
 
     @Test
+    void listTransactions_missingWallet_returns404() throws Exception {
+        mockMvc.perform(get("/wallets/999999/transactions"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error").exists());
+    }
+
+    @Test
     void duplicateWithdrawIdempotencyKey_overHttp_appliesOnce() throws Exception {
         long id = createWallet("Frank");
         mockMvc.perform(post("/wallets/" + id + "/topup").header("Idempotency-Key", "wd-setup")
@@ -193,6 +200,36 @@ class WalletLedgerIntegrationTest {
         mockMvc.perform(post("/wallets/" + id + "/topup")
                         .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":5.00}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void topup_moreThanTwoDecimals_returns400() throws Exception {
+        long id = createWallet("ScaleSue");
+        mockMvc.perform(post("/wallets/" + id + "/topup").header("Idempotency-Key", "sc-1")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":0.005}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("amount must have at most 2 decimal places"));
+    }
+
+    @Test
+    void topup_twoDecimals_retrySameKey_replaysSameTransaction_andBalanceMatches() throws Exception {
+        long id = createWallet("ScaleSam");
+        String body = "{\"amount\":10.05}";
+
+        MvcResult first = mockMvc.perform(post("/wallets/" + id + "/topup").header("Idempotency-Key", "sc-retry")
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk()).andReturn();
+        String firstTxId = first.getResponse().getContentAsString().replaceAll(".*\"id\":(\\d+).*", "$1");
+
+        // retry cung key + cung body -> 200 voi CUNG transaction id (khong 422 do lech scale DB)
+        mockMvc.perform(post("/wallets/" + id + "/topup").header("Idempotency-Key", "sc-retry")
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(Long.parseLong(firstTxId)));
+
+        // balance trong DB khop balanceAfter cua response (khong bi lam tron lech)
+        mockMvc.perform(get("/wallets/" + id))
+                .andExpect(jsonPath("$.balance").value(10.05));
     }
 
     @Test
