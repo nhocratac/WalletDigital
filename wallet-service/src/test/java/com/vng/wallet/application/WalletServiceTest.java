@@ -1,5 +1,6 @@
 package com.vng.wallet.application;
 
+import com.vng.wallet.domain.IdempotencyKeyConflictException;
 import com.vng.wallet.domain.InsufficientFundsException;
 import com.vng.wallet.domain.Wallet;
 import com.vng.wallet.domain.WalletNotFoundException;
@@ -125,6 +126,67 @@ class WalletServiceTest {
         assertEquals(WalletTransaction.Type.WITHDRAW, tx.type());
         assertEquals(0, new BigDecimal("70.00").compareTo(tx.balanceAfter()));
         assertEquals(2, service.listTransactions(w.getId()).size());
+    }
+
+    @Test
+    void withdraw_sameIdempotencyKeyTwice_appliesOnce() {
+        Wallet w = service.createWallet("Bob");
+        service.topup(w.getId(), new BigDecimal("100.00"), "k-setup");
+        WalletTransaction first = service.withdraw(w.getId(), new BigDecimal("30.00"), "w-dup");
+
+        WalletTransaction second = service.withdraw(w.getId(), new BigDecimal("30.00"), "w-dup");
+
+        assertEquals(first.id(), second.id(), "retry tra lai but toan CU, khong tao moi");
+        assertEquals(0, new BigDecimal("70.00").compareTo(second.balanceAfter()), "tra ve balanceAfter cua lan dau");
+        assertEquals(0, new BigDecimal("70.00").compareTo(service.getWallet(w.getId()).getBalance()), "balance chi tru MOT lan");
+        assertEquals(2, service.listTransactions(w.getId()).size(), "1 topup + 1 withdraw");
+    }
+
+    @Test
+    void sameIdempotencyKey_differentPayload_throwsConflictAndBalanceUnchanged() {
+        Wallet w = service.createWallet("Alice");
+        Wallet other = service.createWallet("Mallory");
+        service.topup(w.getId(), new BigDecimal("50.00"), "key-mix");
+
+        // khác amount
+        assertThrows(IdempotencyKeyConflictException.class,
+                () -> service.topup(w.getId(), new BigDecimal("60.00"), "key-mix"));
+        // khác type
+        assertThrows(IdempotencyKeyConflictException.class,
+                () -> service.withdraw(w.getId(), new BigDecimal("50.00"), "key-mix"));
+        // khác wallet
+        assertThrows(IdempotencyKeyConflictException.class,
+                () -> service.topup(other.getId(), new BigDecimal("50.00"), "key-mix"));
+
+        assertEquals(0, new BigDecimal("50.00").compareTo(service.getWallet(w.getId()).getBalance()),
+                "balance KHONG doi khi key bi conflict");
+        assertEquals(0, BigDecimal.ZERO.compareTo(service.getWallet(other.getId()).getBalance()));
+        assertEquals(1, service.listTransactions(w.getId()).size());
+    }
+
+    @Test
+    void sameIdempotencyKey_sameAmountDifferentScale_stillReplays() {
+        Wallet w = service.createWallet("Alice");
+        WalletTransaction first = service.topup(w.getId(), new BigDecimal("100"), "key-scale");
+
+        WalletTransaction second = service.topup(w.getId(), new BigDecimal("100.00"), "key-scale");
+
+        assertEquals(first.id(), second.id(), "100 vs 100.00 la cung mot retry (compareTo semantics)");
+        assertEquals(0, new BigDecimal("100").compareTo(service.getWallet(w.getId()).getBalance()));
+        assertEquals(1, service.listTransactions(w.getId()).size());
+    }
+
+    @Test
+    void moneyOperations_blankIdempotencyKey_throws() {
+        Wallet w = service.createWallet("Alice");
+        service.topup(w.getId(), new BigDecimal("10.00"), "key-fund");
+
+        assertThrows(IllegalArgumentException.class, () -> service.topup(w.getId(), BigDecimal.ONE, ""));
+        assertThrows(IllegalArgumentException.class, () -> service.topup(w.getId(), BigDecimal.ONE, null));
+        assertThrows(IllegalArgumentException.class, () -> service.topup(w.getId(), BigDecimal.ONE, "  "));
+        assertThrows(IllegalArgumentException.class, () -> service.withdraw(w.getId(), BigDecimal.ONE, ""));
+        assertThrows(IllegalArgumentException.class, () -> service.withdraw(w.getId(), BigDecimal.ONE, null));
+        assertThrows(IllegalArgumentException.class, () -> service.withdraw(w.getId(), BigDecimal.ONE, "  "));
     }
 
     @Test

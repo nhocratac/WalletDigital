@@ -85,6 +85,74 @@ class WalletLedgerIntegrationTest {
 
         mockMvc.perform(get("/wallets/" + id + "/transactions"))
                 .andExpect(jsonPath("$.length()").value(0));
+
+        // Lần rút thất bại KHÔNG được ghi/giữ key -> kiểm tra qua DB, không qua API đang test
+        long failedKeyRows = txJpa.findAll().stream()
+                .filter(t -> t.getIdempotencyKey().equals("x1")).count();
+        assertEquals(0, failedKeyRows, "withdraw thất bại không được ghi bút toán cho key x1");
+
+        // Nạp tiền bằng key khác, rồi RETRY với CHÍNH key x1 -> phải thành công (key chưa bị chiếm)
+        mockMvc.perform(post("/wallets/" + id + "/topup").header("Idempotency-Key", "x1-fund")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":10.00}"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/wallets/" + id + "/withdraw").header("Idempotency-Key", "x1")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":5.00}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.balanceAfter").value(5.00));
+
+        long retriedKeyRows = txJpa.findAll().stream()
+                .filter(t -> t.getIdempotencyKey().equals("x1")).count();
+        assertEquals(1, retriedKeyRows, "retry sau thất bại tạo đúng 1 bút toán cho key x1");
+    }
+
+    @Test
+    void duplicateWithdrawIdempotencyKey_overHttp_appliesOnce() throws Exception {
+        long id = createWallet("Frank");
+        mockMvc.perform(post("/wallets/" + id + "/topup").header("Idempotency-Key", "wd-setup")
+                .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":100.00}")).andExpect(status().isOk());
+
+        mockMvc.perform(post("/wallets/" + id + "/withdraw").header("Idempotency-Key", "wd-dup")
+                .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":30.00}")).andExpect(status().isOk());
+        mockMvc.perform(post("/wallets/" + id + "/withdraw").header("Idempotency-Key", "wd-dup")
+                .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":30.00}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.balanceAfter").value(70.00)); // ket qua CU, khong tru lan 2
+
+        mockMvc.perform(get("/wallets/" + id)).andExpect(jsonPath("$.balance").value(70.00));
+        long count = txJpa.findAll().stream()
+                .filter(t -> t.getIdempotencyKey().equals("wd-dup")).count();
+        assertEquals(1, count, "DB chi co dung 1 but toan WITHDRAW cho key nay");
+    }
+
+    @Test
+    void sameIdempotencyKey_mismatchedPayload_returns422_andSingleLedgerRow() throws Exception {
+        long id = createWallet("Grace");
+        mockMvc.perform(post("/wallets/" + id + "/topup").header("Idempotency-Key", "mm-key")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":50.00}"))
+                .andExpect(status().isOk());
+
+        // cùng key, amount khác -> 422, không thực thi
+        mockMvc.perform(post("/wallets/" + id + "/topup").header("Idempotency-Key", "mm-key")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":60.00}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.error").exists());
+
+        mockMvc.perform(get("/wallets/" + id)).andExpect(jsonPath("$.balance").value(50.00));
+        long count = txJpa.findAll().stream()
+                .filter(t -> t.getIdempotencyKey().equals("mm-key")).count();
+        assertEquals(1, count, "ledger chi co dung 1 but toan cho key nay");
+    }
+
+    @Test
+    void moneyEndpoints_blankIdempotencyKeyHeader_returns400() throws Exception {
+        long id = createWallet("Heidi");
+        mockMvc.perform(post("/wallets/" + id + "/topup").header("Idempotency-Key", "")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":5.00}"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(post("/wallets/" + id + "/withdraw").header("Idempotency-Key", "")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":5.00}"))
+                .andExpect(status().isBadRequest());
     }
 
     @Test

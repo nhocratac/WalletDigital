@@ -39,6 +39,20 @@ class WalletTest {
     }
 
     @Test
+    void withdraw_exactBalance_succeedsToZero() {
+        Wallet w = new Wallet(1L, "Alice", new BigDecimal("30.00"), 0L);
+        w.withdraw(new BigDecimal("30.00"));
+        assertEquals(0, BigDecimal.ZERO.compareTo(w.getBalance()), "rút đúng số dư phải hợp lệ, balance về 0");
+    }
+
+    @Test
+    void withdraw_exactBalance_differentScale_succeedsToZero() {
+        Wallet w = new Wallet(1L, "Alice", new BigDecimal("30.00"), 0L);
+        w.withdraw(new BigDecimal("30"));
+        assertEquals(0, BigDecimal.ZERO.compareTo(w.getBalance()), "so sánh không phụ thuộc scale ('30' == '30.00')");
+    }
+
+    @Test
     void withdraw_insufficientFunds_throws() {
         Wallet w = new Wallet(1L, "Alice", new BigDecimal("30.00"), 0L);
         assertThrows(InsufficientFundsException.class, () -> w.withdraw(new BigDecimal("30.01")));

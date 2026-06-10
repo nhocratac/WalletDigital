@@ -28,6 +28,9 @@ class JpaWalletRepositoryTest {
     @Autowired
     private SpringDataWalletTransactionJpa txJpa;
 
+    @Autowired
+    private SpringDataWalletJpa walletJpa;
+
     @Test
     void saveThenFind_roundTripsThroughDatabase() {
         Wallet saved = repository.save(Wallet.createNew("Alice"));
@@ -62,6 +65,40 @@ class JpaWalletRepositoryTest {
         assertEquals(tx.id(), found.get().id());
         assertEquals(0, new BigDecimal("50.00").compareTo(found.get().balanceAfter()));
         assertEquals(1, repository.listTransactions(w.getId()).size());
+    }
+
+    @Test
+    void version_startsAtZero_andIncrementsOnUpdate() {
+        Wallet saved = repository.save(Wallet.createNew("Alice")); // ví mới: version = null
+        em.flush(); em.clear();
+
+        Wallet reloaded = repository.findById(saved.getId()).orElseThrow();
+        assertEquals(0L, reloaded.getVersion(), "INSERT đầu tiên -> version 0");
+
+        reloaded.topup(BigDecimal.TEN);
+        repository.save(reloaded);
+        em.flush(); em.clear();
+
+        Wallet afterUpdate = repository.findById(saved.getId()).orElseThrow();
+        assertEquals(1L, afterUpdate.getVersion(), "UPDATE -> version tăng lên 1 (mapper/save không được làm rơi version)");
+        assertEquals(0, BigDecimal.TEN.compareTo(afterUpdate.getBalance()));
+    }
+
+    @Test
+    void staleVersionWrite_throwsOptimisticLockingFailure() {
+        Wallet saved = repository.save(Wallet.createNew("Alice"));
+        em.flush(); em.clear();
+
+        Wallet current = repository.findById(saved.getId()).orElseThrow(); // version 0
+        current.topup(BigDecimal.TEN);
+        repository.save(current);
+        em.flush(); em.clear(); // DB giờ ở version 1
+
+        Wallet stale = new Wallet(saved.getId(), "Alice", new BigDecimal("999.00"), 0L); // version cũ
+        assertThrows(org.springframework.dao.OptimisticLockingFailureException.class, () -> {
+            repository.save(stale);
+            walletJpa.flush(); // flush qua proxy Spring Data để có exception translation
+        });
     }
 
     @Test
