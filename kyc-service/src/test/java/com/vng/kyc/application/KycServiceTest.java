@@ -110,12 +110,21 @@ class KycServiceTest {
     void revoke_fromApproved_publishesEvent() {
         String subId = service.submit("user-1", List.of("d"));
         service.applyDecision(subId, KycDecision.Type.APPROVE, "v", "ok");
+        int decisionsBefore = repo.decisions.size();
 
         service.revoke("user-1", "compliance-officer", "fraud detected");
 
         assertEquals(KycStatus.REVOKED, repo.findByUserId("user-1").orElseThrow().getStatus());
         assertEquals(List.of(new FakePublisher.Revoked("user-1", "fraud detected")),
                 publisher.events, "event kyc.revoked phải được phát kèm đúng reason");
+        assertEquals(decisionsBefore + 1, repo.decisions.size(),
+                "REVOKE phải được ghi vào audit ledger");
+        KycDecision d = repo.decisions.values().stream()
+                .filter(x -> x.type() == KycDecision.Type.REVOKE)
+                .findFirst().orElseThrow();
+        assertEquals(subId, d.submissionId());
+        assertEquals("compliance-officer", d.decidedBy());
+        assertEquals("fraud detected", d.reason());
     }
 
     @Test

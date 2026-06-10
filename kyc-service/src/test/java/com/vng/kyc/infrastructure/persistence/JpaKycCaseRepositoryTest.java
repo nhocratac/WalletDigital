@@ -36,13 +36,21 @@ class JpaKycCaseRepositoryTest {
     @Test
     void submissionAndDecision_roundTrip() {
         repository.saveSubmission(new KycSubmission("sub-1", "user-1", List.of("ref-a", "ref-b"), Instant.now()));
-        repository.saveDecision(new KycDecision("dec-1", "sub-1", KycDecision.Type.APPROVE, "v", "ok", Instant.now()));
+        Instant decidedAt = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MILLIS);
+        repository.saveDecision(new KycDecision("dec-1", "sub-1", KycDecision.Type.APPROVE, "v", "ok", decidedAt));
         em.flush(); em.clear();
 
         assertTrue(repository.findSubmission("sub-1").isPresent());
         assertEquals(List.of("ref-a", "ref-b"), repository.findSubmission("sub-1").orElseThrow().documentRefs());
         assertTrue(repository.decisionExistsForSubmission("sub-1"));
         assertFalse(repository.decisionExistsForSubmission("sub-2"));
+
+        KycDecisionEntity stored = decisionJpa.findById("dec-1").orElseThrow();
+        assertEquals("sub-1", stored.getSubmissionId());
+        assertEquals(KycDecision.Type.APPROVE, stored.getType());
+        assertEquals("v", stored.getDecidedBy());
+        assertEquals("ok", stored.getReason());
+        assertEquals(decidedAt, stored.getDecidedAt());
     }
 
     @Test

@@ -42,5 +42,7 @@ class HmacVerifierTest {
         long now = 1749470000L;
         assertTrue(verifier.isTimestampFresh(now, now - 200, 300));
         assertFalse(verifier.isTimestampFresh(now, now - 400, 300)); // quá 5 phút -> replay
+        assertTrue(verifier.isTimestampFresh(now, now + 200, 300));  // clock skew nhỏ về tương lai -> chấp nhận
+        assertFalse(verifier.isTimestampFresh(now, now + 400, 300)); // timestamp tương lai xa -> pre-dated replay, từ chối
     }
 }

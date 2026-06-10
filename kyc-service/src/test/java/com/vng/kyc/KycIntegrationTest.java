@@ -105,8 +105,13 @@ class KycIntegrationTest {
         String body = "{\"submissionId\":\"" + subId
                 + "\",\"decision\":\"APPROVE\",\"decidedBy\":\"v\",\"reason\":\"ok\"}";
 
-        assertEquals(200, webhookPost(body).getResponse().getStatus());
-        assertEquals(200, webhookPost(body).getResponse().getStatus()); // retry -> vẫn 200
+        MvcResult first = webhookPost(body);
+        assertEquals(200, first.getResponse().getStatus());
+        assertTrue(first.getResponse().getContentAsString().contains("APPLIED"));
+
+        MvcResult retry = webhookPost(body); // retry -> vẫn 200, nhưng phải là no-op có chủ đích
+        assertEquals(200, retry.getResponse().getStatus());
+        assertTrue(retry.getResponse().getContentAsString().contains("DUPLICATE_IGNORED"));
 
         long count = decisionJpa.findAll().stream()
                 .filter(d -> d.getSubmissionId().equals(subId)).count();
@@ -141,6 +146,12 @@ class KycIntegrationTest {
                 "{\"reason\":\"fraud\"}", "api-gateway", "it-internal", "compliance");
         assertEquals(200, withRole.getResponse().getStatus());
         assertCaseStatus("user-revoke", "REVOKED"); // transition APPROVED -> REVOKED đã persist
+
+        // Audit ledger: đúng 1 row REVOKE đã persist cho submission hiện tại
+        assertEquals(1, decisionJpa.findAll().stream()
+                        .filter(d -> d.getSubmissionId().equals(subId)
+                                && d.getType() == com.vng.kyc.domain.KycDecision.Type.REVOKE).count(),
+                "REVOKE phải được ghi vào audit ledger");
     }
 
     @Test
@@ -269,6 +280,47 @@ class KycIntegrationTest {
                         "/kyc/webhooks/decision", ts, bytes))).andReturn();
         assertEquals(401, r.getResponse().getStatus());
         assertTrue(r.getResponse().getContentAsString().contains("Invalid signature"));
+    }
+
+    @Test
+    void doubleSubmitSamePendingUser_is409() throws Exception {
+        submitAndGetId("user-double");
+
+        MvcResult r = signedPost("/kyc/submissions",
+                "{\"userId\":\"user-double\",\"documentRefs\":[\"ref-1\"]}",
+                "api-gateway", "it-internal", null);
+        assertEquals(409, r.getResponse().getStatus());
+        assertTrue(r.getResponse().getContentAsString().contains("\"error\""));
+        assertCaseStatus("user-double", "PENDING");
+    }
+
+    @Test
+    void webhookForUnknownSubmission_is404() throws Exception {
+        MvcResult r = webhookPost(
+                "{\"submissionId\":\"sub-unknown\",\"decision\":\"APPROVE\",\"decidedBy\":\"v\",\"reason\":\"ok\"}");
+        assertEquals(404, r.getResponse().getStatus());
+        // Unknown-id là 404, khác hợp đồng always-200 cho duplicate/stale của submission đã biết
+        assertEquals(0, decisionJpa.findAll().stream()
+                .filter(d -> d.getSubmissionId().equals("sub-unknown")).count());
+    }
+
+    @Test
+    void revokeUnknownUser_is404() throws Exception {
+        MvcResult r = signedPost("/kyc/cases/user-ghost-revoke/revoke",
+                "{\"reason\":\"r\"}", "api-gateway", "it-internal", "compliance");
+        assertEquals(404, r.getResponse().getStatus());
+    }
+
+    @Test
+    void revokePendingUser_is409() throws Exception {
+        String subId = submitAndGetId("user-revoke-pending");
+
+        MvcResult r = signedPost("/kyc/cases/user-revoke-pending/revoke",
+                "{\"reason\":\"r\"}", "api-gateway", "it-internal", "compliance");
+        assertEquals(409, r.getResponse().getStatus());
+        assertCaseStatus("user-revoke-pending", "PENDING");
+        assertEquals(0, decisionJpa.findAll().stream()
+                .filter(d -> d.getSubmissionId().equals(subId)).count());
     }
 
     @Test
