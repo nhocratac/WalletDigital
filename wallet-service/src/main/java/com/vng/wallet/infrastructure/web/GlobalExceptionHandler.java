@@ -34,7 +34,7 @@ public class GlobalExceptionHandler {
                 .body(Map.of("error", ex.getMessage()));
     }
 
-    @ExceptionHandler(org.springframework.dao.OptimisticLockingFailureException.class)
+    @ExceptionHandler(org.springframework.dao.ConcurrencyFailureException.class)
     public ResponseEntity<Map<String, String>> lockConflict(Exception ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT) // 409: đua nhau cập nhật, retry
                 .body(Map.of("error", "Concurrent update, please retry"));

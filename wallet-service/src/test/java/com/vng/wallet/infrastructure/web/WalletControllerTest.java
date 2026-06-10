@@ -54,6 +54,10 @@ class WalletControllerTest {
                     if (id == 1L) {
                         return Optional.of(new Wallet(1L, "Existing Owner", new BigDecimal("250.00"), 0L));
                     }
+                    // Stub: id=2 mô phỏng thua tranh chấp lock ở tầng hạ tầng -> 409.
+                    if (id == 2L) {
+                        throw new org.springframework.dao.CannotAcquireLockException("lock timeout");
+                    }
                     return Optional.empty();
                 }
 
@@ -111,6 +115,17 @@ class WalletControllerTest {
         mockMvc.perform(get("/wallets/999999"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("Wallet not found with id: 999999"));
+    }
+
+    @Test
+    void withdraw_lockConflict_returns409() throws Exception {
+        // Stub repository ném CannotAcquireLockException cho id=2 -> handler map ConcurrencyFailureException -> 409.
+        mockMvc.perform(post("/wallets/2/withdraw")
+                        .header("Idempotency-Key", "lock-409")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"amount\":5.00}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error").value("Concurrent update, please retry"));
     }
 
     @Test

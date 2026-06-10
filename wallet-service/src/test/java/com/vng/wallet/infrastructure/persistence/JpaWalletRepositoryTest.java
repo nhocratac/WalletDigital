@@ -68,6 +68,26 @@ class JpaWalletRepositoryTest {
     }
 
     @Test
+    void listTransactions_returnsRowsOrderedByCreatedAtAscending() {
+        Wallet w = repository.save(Wallet.createNew("Alice"));
+        Instant base = Instant.parse("2026-01-01T00:00:00Z");
+        // Chèn CỐ TÌNH lệch thứ tự thời gian để chốt hợp đồng ORDER BY createdAt ASC
+        repository.saveTransaction(new WalletTransaction(null, w.getId(),
+                WalletTransaction.Type.TOPUP, BigDecimal.ONE, "k-1", BigDecimal.ONE, base.plusSeconds(2)));
+        repository.saveTransaction(new WalletTransaction(null, w.getId(),
+                WalletTransaction.Type.TOPUP, BigDecimal.ONE, "k-2", BigDecimal.ONE, base));
+        repository.saveTransaction(new WalletTransaction(null, w.getId(),
+                WalletTransaction.Type.TOPUP, BigDecimal.ONE, "k-3", BigDecimal.ONE, base.plusSeconds(1)));
+        em.flush(); em.clear();
+
+        var txs = repository.listTransactions(w.getId());
+        assertEquals(3, txs.size());
+        assertEquals(java.util.List.of("k-2", "k-3", "k-1"),
+                txs.stream().map(WalletTransaction::idempotencyKey).toList(),
+                "listTransactions phải trả về theo createdAt tăng dần, không phụ thuộc thứ tự insert");
+    }
+
+    @Test
     void version_startsAtZero_andIncrementsOnUpdate() {
         Wallet saved = repository.save(Wallet.createNew("Alice")); // ví mới: version = null
         em.flush(); em.clear();

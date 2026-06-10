@@ -50,7 +50,11 @@ class WalletLedgerIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(2))
                 .andExpect(jsonPath("$[0].type").value("TOPUP"))
-                .andExpect(jsonPath("$[1].type").value("WITHDRAW"));
+                .andExpect(jsonPath("$[0].amount").value(100.00))
+                .andExpect(jsonPath("$[0].createdAt").exists())
+                .andExpect(jsonPath("$[1].type").value("WITHDRAW"))
+                .andExpect(jsonPath("$[1].amount").value(30.00))
+                .andExpect(jsonPath("$[1].balanceAfter").value(70.00));
 
         mockMvc.perform(get("/wallets/" + id))
                 .andExpect(jsonPath("$.balance").value(70.00));
@@ -104,6 +108,34 @@ class WalletLedgerIntegrationTest {
         long retriedKeyRows = txJpa.findAll().stream()
                 .filter(t -> t.getIdempotencyKey().equals("x1")).count();
         assertEquals(1, retriedKeyRows, "retry sau thất bại tạo đúng 1 bút toán cho key x1");
+    }
+
+    @Test
+    void moneyEndpoints_missingWallet_returns404_andNoLedgerRow() throws Exception {
+        mockMvc.perform(post("/wallets/999999/topup").header("Idempotency-Key", "nf-t")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":5.00}"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error").exists());
+
+        mockMvc.perform(post("/wallets/999999/withdraw").header("Idempotency-Key", "nf-w")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":5.00}"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error").exists());
+
+        long orphanRows = txJpa.findAll().stream()
+                .filter(t -> t.getIdempotencyKey().equals("nf-t") || t.getIdempotencyKey().equals("nf-w"))
+                .count();
+        assertEquals(0, orphanRows, "404 tren money endpoint khong duoc ghi but toan / chiem key");
+
+        // Chứng minh key chưa bị chiếm: retry "nf-t" với ví thật -> 200 và đúng 1 bút toán
+        long id = createWallet("NotFoundNed");
+        mockMvc.perform(post("/wallets/" + id + "/topup").header("Idempotency-Key", "nf-t")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":5.00}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.balanceAfter").value(5.00));
+        long retriedRows = txJpa.findAll().stream()
+                .filter(t -> t.getIdempotencyKey().equals("nf-t")).count();
+        assertEquals(1, retriedRows, "retry sau 404 tao dung 1 but toan cho key nf-t");
     }
 
     @Test

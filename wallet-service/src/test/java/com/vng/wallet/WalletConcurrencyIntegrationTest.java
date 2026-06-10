@@ -25,7 +25,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * Gọi WalletService TRỰC TIẾP từ N thread (không qua MockMvc) — mỗi thread một
  * Idempotency-Key riêng, nếu không idempotency short-circuit sẽ che mất race.
  * Loser surface dưới dạng exception (service không retry); GlobalExceptionHandler
- * map OptimisticLockingFailureException -> 409 ở tầng HTTP.
+ * map ConcurrencyFailureException -> 409 ở tầng HTTP.
  */
 @SpringBootTest
 class WalletConcurrencyIntegrationTest {
