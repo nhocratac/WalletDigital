@@ -1,0 +1,19 @@
+server:
+  port: 8082
+spring:
+  application:
+    name: kyc-service
+  datasource:
+    url: jdbc:h2:mem:kycdb
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  jpa:
+    hibernate:
+      ddl-auto: update   # nợ kỹ thuật đã ghi nhận — production dùng Flyway
+
+kyc:
+  internal-hmac-secret: ${KYC_INTERNAL_HMAC_SECRET:local-dev-secret}
+  verifier-hmac-secret: ${KYC_VERIFIER_HMAC_SECRET:verifier-dev-secret}
+  allowed-services: api-gateway,wallet-service
+  revoke-role: compliance
