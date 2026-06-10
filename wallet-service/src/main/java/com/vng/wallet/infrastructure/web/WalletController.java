@@ -3,11 +3,15 @@ package com.vng.wallet.infrastructure.web;
 import com.vng.wallet.application.WalletService;
 import com.vng.wallet.domain.Wallet;
 import com.vng.wallet.infrastructure.web.dto.CreateWalletRequest;
+import com.vng.wallet.infrastructure.web.dto.MoneyRequest;
+import com.vng.wallet.infrastructure.web.dto.TransactionResponse;
 import com.vng.wallet.infrastructure.web.dto.WalletResponse;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/wallets")
@@ -28,5 +32,24 @@ public class WalletController {
     @GetMapping("/{id}")
     public WalletResponse getWallet(@PathVariable Long id) {
         return WalletResponse.from(walletService.getWallet(id));
+    }
+
+    @PostMapping("/{id}/topup")
+    public TransactionResponse topup(@PathVariable Long id,
+                                     @RequestHeader("Idempotency-Key") String idempotencyKey,
+                                     @Valid @RequestBody MoneyRequest request) {
+        return TransactionResponse.from(walletService.topup(id, request.amount(), idempotencyKey));
+    }
+
+    @PostMapping("/{id}/withdraw")
+    public TransactionResponse withdraw(@PathVariable Long id,
+                                        @RequestHeader("Idempotency-Key") String idempotencyKey,
+                                        @Valid @RequestBody MoneyRequest request) {
+        return TransactionResponse.from(walletService.withdraw(id, request.amount(), idempotencyKey));
+    }
+
+    @GetMapping("/{id}/transactions")
+    public List<TransactionResponse> transactions(@PathVariable Long id) {
+        return walletService.listTransactions(id).stream().map(TransactionResponse::from).toList();
     }
 }
