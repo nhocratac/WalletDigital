@@ -2,6 +2,9 @@ package com.vng.wallet.application;
 
 import com.vng.wallet.domain.IdempotencyKeyConflictException;
 import com.vng.wallet.domain.InsufficientFundsException;
+import com.vng.wallet.domain.KycGate;
+import com.vng.wallet.domain.KycNotApprovedException;
+import com.vng.wallet.domain.KycUnavailableException;
 import com.vng.wallet.domain.Wallet;
 import com.vng.wallet.domain.WalletNotFoundException;
 import com.vng.wallet.domain.WalletRepository;
@@ -93,8 +96,17 @@ class WalletServiceTest {
         @Override protected void doRollback(DefaultTransactionStatus status) {}
     }
 
+    /** Fake gate điều khiển được — đếm số lần gọi để chốt hợp đồng "replay không đụng gate". */
+    static class FakeKycGate implements KycGate {
+        KycCheckResult next = new KycCheckResult(Decision.ALLOWED, "APPROVED");
+        int calls = 0;
+        @Override
+        public KycCheckResult check(String userId) { calls++; return next; }
+    }
+
+    private final FakeKycGate gate = new FakeKycGate();
     private final WalletService service = new WalletService(
-            new InMemoryWalletRepository(), new TransactionTemplate(new NoopTransactionManager()));
+            new InMemoryWalletRepository(), new TransactionTemplate(new NoopTransactionManager()), gate);
 
     @Test
     void createWallet_savesWithZeroBalanceAndId() {
@@ -217,6 +229,47 @@ class WalletServiceTest {
         assertThrows(IllegalArgumentException.class, () -> service.withdraw(w.getId(), "user-1", BigDecimal.ONE, ""));
         assertThrows(IllegalArgumentException.class, () -> service.withdraw(w.getId(), "user-1", BigDecimal.ONE, null));
         assertThrows(IllegalArgumentException.class, () -> service.withdraw(w.getId(), "user-1", BigDecimal.ONE, "  "));
+    }
+
+    @Test
+    void withdraw_kycDenied_throws403TypeAndNoLedger() {
+        Wallet w = service.createWallet("user-1", "Alice");
+        service.topup(w.getId(), "user-1", new BigDecimal("100"), "k1");
+        gate.next = new KycGate.KycCheckResult(KycGate.Decision.DENIED, "PENDING");
+
+        assertThrows(KycNotApprovedException.class,
+                () -> service.withdraw(w.getId(), "user-1", new BigDecimal("10"), "k2"));
+        assertEquals(1, service.listTransactions(w.getId(), "user-1").size(), "không có bút toán WITHDRAW");
+    }
+
+    @Test
+    void withdraw_kycUnavailable_throws503Type() {
+        Wallet w = service.createWallet("user-1", "Alice");
+        gate.next = new KycGate.KycCheckResult(KycGate.Decision.UNAVAILABLE, null);
+        assertThrows(KycUnavailableException.class,
+                () -> service.withdraw(w.getId(), "user-1", new BigDecimal("1"), "k3"));
+    }
+
+    @Test
+    void withdraw_idempotentReplay_skipsKycGate() {
+        Wallet w = service.createWallet("user-1", "Alice");
+        service.topup(w.getId(), "user-1", new BigDecimal("100"), "kt");
+        service.withdraw(w.getId(), "user-1", new BigDecimal("10"), "kw");
+        gate.calls = 0;
+        gate.next = new KycGate.KycCheckResult(KycGate.Decision.DENIED, "REVOKED"); // dù giờ bị deny...
+
+        WalletTransaction replay = service.withdraw(w.getId(), "user-1", new BigDecimal("10"), "kw");
+
+        assertEquals(0, gate.calls, "replay KHÔNG gọi gate — trả kết quả CŨ (đúng ngữ nghĩa idempotent)");
+        assertEquals(0, new BigDecimal("10").compareTo(replay.amount()));
+    }
+
+    @Test
+    void topup_neverCallsKycGate() {
+        Wallet w = service.createWallet("user-1", "Alice");
+        gate.calls = 0;
+        service.topup(w.getId(), "user-1", new BigDecimal("5"), "kx");
+        assertEquals(0, gate.calls, "R1: nạp tiền tự do, không gác");
     }
 
     @Test

@@ -1,6 +1,9 @@
 package com.vng.wallet.application;
 
 import com.vng.wallet.domain.IdempotencyKeyConflictException;
+import com.vng.wallet.domain.KycGate;
+import com.vng.wallet.domain.KycNotApprovedException;
+import com.vng.wallet.domain.KycUnavailableException;
 import com.vng.wallet.domain.Wallet;
 import com.vng.wallet.domain.WalletNotFoundException;
 import com.vng.wallet.domain.WalletRepository;
@@ -27,10 +30,12 @@ public class WalletService {
 
     private final WalletRepository walletRepository;
     private final TransactionTemplate txTemplate;
+    private final KycGate kycGate;
 
-    public WalletService(WalletRepository walletRepository, TransactionTemplate txTemplate) {
+    public WalletService(WalletRepository walletRepository, TransactionTemplate txTemplate, KycGate kycGate) {
         this.walletRepository = walletRepository;
         this.txTemplate = txTemplate;
+        this.kycGate = kycGate;
     }
 
     @Transactional
@@ -51,7 +56,24 @@ public class WalletService {
         return executeWithIdempotentRecovery(walletId, userId, amount, idempotencyKey, WalletTransaction.Type.TOPUP);
     }
 
+    /**
+     * Thứ tự theo design mục 4: [0] idempotency replay (đọc, NGOÀI tx) →
+     * [1+2] cổng KYC (NGOÀI transaction — D4, no remote calls inside a DB transaction) →
+     * [3] thực thi trong transaction.
+     */
     public WalletTransaction withdraw(Long walletId, String userId, BigDecimal amount, String idempotencyKey) {
+        validateKeyAndAmount(idempotencyKey, amount); // các check review Stage 2 — giữ nguyên, gọi trước
+        var existing = walletRepository.findTransactionByIdempotencyKey(idempotencyKey);
+        if (existing.isPresent()) {                    // [0] replay -> kết quả cũ, KHÔNG đụng gate
+            requireMatchingTransaction(existing.get(), walletId, WalletTransaction.Type.WITHDRAW, amount);
+            return existing.get();
+        }
+        KycGate.KycCheckResult kyc = kycGate.check(userId);          // [2] NGOÀI transaction (D4)
+        switch (kyc.decision()) {
+            case DENIED -> throw new KycNotApprovedException(kyc.kycStatus());
+            case UNAVAILABLE -> throw new KycUnavailableException();
+            case ALLOWED -> { /* qua cổng */ }
+        }
         return executeWithIdempotentRecovery(walletId, userId, amount, idempotencyKey, WalletTransaction.Type.WITHDRAW);
     }
 

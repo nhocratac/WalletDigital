@@ -120,7 +120,9 @@ class WalletControllerTest {
                 public List<WalletTransaction> listTransactions(Long walletId) {
                     return transactions.stream().filter(t -> t.walletId().equals(walletId)).toList();
                 }
-            }, noopTxTemplate());
+            }, noopTxTemplate(),
+            userId -> new com.vng.wallet.domain.KycGate.KycCheckResult(
+                    com.vng.wallet.domain.KycGate.Decision.ALLOWED, "APPROVED")); // gate allow-all cho test web
         }
     }
 

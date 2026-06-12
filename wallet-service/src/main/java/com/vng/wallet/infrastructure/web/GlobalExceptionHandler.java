@@ -2,6 +2,8 @@ package com.vng.wallet.infrastructure.web;
 
 import com.vng.wallet.domain.IdempotencyKeyConflictException;
 import com.vng.wallet.domain.InsufficientFundsException;
+import com.vng.wallet.domain.KycNotApprovedException;
+import com.vng.wallet.domain.KycUnavailableException;
 import com.vng.wallet.domain.WalletNotFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -55,6 +57,19 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(org.springframework.web.bind.MissingRequestHeaderException.class)
     public ResponseEntity<Map<String, String>> missingHeader(org.springframework.web.bind.MissingRequestHeaderException ex) {
         return ResponseEntity.badRequest().body(Map.of("error", "Missing required header: " + ex.getHeaderName()));
+    }
+
+    @ExceptionHandler(KycNotApprovedException.class)
+    public ResponseEntity<Map<String, String>> kycDenied(KycNotApprovedException ex) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(Map.of("error", ex.getMessage(), "status", String.valueOf(ex.getKycStatus())));
+    }
+
+    @ExceptionHandler(KycUnavailableException.class)
+    public ResponseEntity<Map<String, String>> kycUnavailable(KycUnavailableException ex) {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .header("Retry-After", "10")                      // header CHUẨN, không có X- (D7)
+                .body(Map.of("error", ex.getMessage()));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
