@@ -11,8 +11,16 @@ spring:
   jpa:
     hibernate:
       ddl-auto: update   # nợ kỹ thuật đã ghi nhận — production dùng Flyway
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    producer:
+      acks: all
+      properties:
+        enable.idempotence: true
 
 kyc:
+  events:
+    kafka-enabled: ${KYC_KAFKA_ENABLED:false}    # mặc định TẮT -> test cũ không cần Kafka
   internal-hmac-secret: ${KYC_INTERNAL_HMAC_SECRET:local-dev-secret}
   verifier-hmac-secret: ${KYC_VERIFIER_HMAC_SECRET:verifier-dev-secret}
   allowed-services: api-gateway,wallet-service
