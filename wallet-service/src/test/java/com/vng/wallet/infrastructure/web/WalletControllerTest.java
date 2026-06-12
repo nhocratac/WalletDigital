@@ -58,15 +58,15 @@ class WalletControllerTest {
             return new WalletService(new WalletRepository() {
                 @Override
                 public Wallet save(Wallet wallet) {
-                    // Stub: gán id cố định, giữ nguyên ownerName + balance (0 cho ví mới).
-                    return new Wallet(1L, wallet.getOwnerName(), wallet.getBalance(), 0L);
+                    // Stub: gán id cố định, giữ nguyên userId + ownerName + balance (0 cho ví mới).
+                    return new Wallet(1L, wallet.getUserId(), wallet.getOwnerName(), wallet.getBalance(), 0L);
                 }
 
                 @Override
                 public Optional<Wallet> findById(Long id) {
                     // Stub: chỉ ví id=1 tồn tại (số dư 250.00); id khác -> rỗng -> 404.
                     if (id == 1L) {
-                        return Optional.of(new Wallet(1L, "Existing Owner", new BigDecimal("250.00"), 0L));
+                        return Optional.of(new Wallet(1L, "user-1", "Existing Owner", new BigDecimal("250.00"), 0L));
                     }
                     // Stub: id=2 mô phỏng thua tranh chấp lock ở tầng hạ tầng -> 409.
                     if (id == 2L) {
@@ -107,6 +107,7 @@ class WalletControllerTest {
     @Test
     void createWallet_returns201WithZeroBalance() throws Exception {
         mockMvc.perform(post("/wallets")
+                        .header("X-User-Id", "user-1")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"ownerName\":\"Alice\"}"))
                 .andExpect(status().isCreated())
@@ -145,6 +146,7 @@ class WalletControllerTest {
     @Test
     void createWallet_emptyOwner_returns400() throws Exception {
         mockMvc.perform(post("/wallets")
+                        .header("X-User-Id", "user-1")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"ownerName\":\"\"}"))
                 .andExpect(status().isBadRequest())
@@ -154,6 +156,7 @@ class WalletControllerTest {
     @Test
     void createWallet_nullOwner_returns400() throws Exception {
         mockMvc.perform(post("/wallets")
+                        .header("X-User-Id", "user-1")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
                 .andExpect(status().isBadRequest())
@@ -163,6 +166,7 @@ class WalletControllerTest {
     @Test
     void createWallet_whitespaceOwner_returns400() throws Exception {
         mockMvc.perform(post("/wallets")
+                        .header("X-User-Id", "user-1")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"ownerName\":\"   \"}"))
                 .andExpect(status().isBadRequest())

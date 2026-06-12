@@ -11,19 +11,21 @@ import java.math.BigDecimal;
 public class Wallet {
 
     private final Long id;
+    private final String userId;   // khoá định danh chủ ví — KHÔNG phải ownerName
     private final String ownerName;
     private BigDecimal balance;
     private final Long version;
 
-    public Wallet(Long id, String ownerName, BigDecimal balance, Long version) {
+    public Wallet(Long id, String userId, String ownerName, BigDecimal balance, Long version) {
         this.id = id;
+        this.userId = userId;
         this.ownerName = ownerName;
         this.balance = balance;
         this.version = version;
     }
 
-    public static Wallet createNew(String ownerName) {
-        return new Wallet(null, ownerName, BigDecimal.ZERO, null);
+    public static Wallet createNew(String userId, String ownerName) {
+        return new Wallet(null, userId, ownerName, BigDecimal.ZERO, null);
     }
 
     public void topup(BigDecimal amount) {
@@ -46,6 +48,7 @@ public class Wallet {
     }
 
     public Long getId() { return id; }
+    public String getUserId() { return userId; }
     public String getOwnerName() { return ownerName; }
     public BigDecimal getBalance() { return balance; }
     public Long getVersion() { return version; }

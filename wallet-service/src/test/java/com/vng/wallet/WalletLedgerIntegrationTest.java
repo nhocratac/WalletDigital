@@ -23,6 +23,7 @@ class WalletLedgerIntegrationTest {
 
     private long createWallet(String owner) throws Exception {
         MvcResult r = mockMvc.perform(post("/wallets")
+                        .header("X-User-Id", "user-1")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"ownerName\":\"" + owner + "\"}"))
                 .andExpect(status().isCreated()).andReturn();

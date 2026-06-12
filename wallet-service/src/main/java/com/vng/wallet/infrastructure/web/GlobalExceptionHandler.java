@@ -53,8 +53,8 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(org.springframework.web.bind.MissingRequestHeaderException.class)
-    public ResponseEntity<Map<String, String>> missingHeader(Exception ex) {
-        return ResponseEntity.badRequest().body(Map.of("error", "Missing required header: Idempotency-Key"));
+    public ResponseEntity<Map<String, String>> missingHeader(org.springframework.web.bind.MissingRequestHeaderException ex) {
+        return ResponseEntity.badRequest().body(Map.of("error", "Missing required header: " + ex.getHeaderName()));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

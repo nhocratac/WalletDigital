@@ -29,8 +29,8 @@ public class WalletService {
     }
 
     @Transactional
-    public Wallet createWallet(String ownerName) {
-        return walletRepository.save(Wallet.createNew(ownerName));
+    public Wallet createWallet(String userId, String ownerName) {
+        return walletRepository.save(Wallet.createNew(userId, ownerName));
     }
 
     @Transactional(readOnly = true)

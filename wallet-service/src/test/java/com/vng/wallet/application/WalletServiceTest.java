@@ -32,7 +32,7 @@ class WalletServiceTest {
         @Override
         public Wallet save(Wallet wallet) {
             Long id = wallet.getId() != null ? wallet.getId() : seq.incrementAndGet();
-            Wallet saved = new Wallet(id, wallet.getOwnerName(), wallet.getBalance(), wallet.getVersion());
+            Wallet saved = new Wallet(id, wallet.getUserId(), wallet.getOwnerName(), wallet.getBalance(), wallet.getVersion());
             store.put(id, saved);
             return saved;
         }
@@ -81,7 +81,7 @@ class WalletServiceTest {
 
     @Test
     void createWallet_savesWithZeroBalanceAndId() {
-        Wallet created = service.createWallet("Alice");
+        Wallet created = service.createWallet("user-1", "Alice");
 
         assertNotNull(created.getId(), "sau khi lưu phải có id");
         assertEquals("Alice", created.getOwnerName());
@@ -90,7 +90,7 @@ class WalletServiceTest {
 
     @Test
     void getWallet_returnsSavedWallet() {
-        Wallet created = service.createWallet("Bob");
+        Wallet created = service.createWallet("user-1", "Bob");
 
         Wallet found = service.getWallet(created.getId());
 
@@ -106,7 +106,7 @@ class WalletServiceTest {
 
     @Test
     void topup_appendsLedgerAndUpdatesBalance() {
-        Wallet w = service.createWallet("Alice");
+        Wallet w = service.createWallet("user-1", "Alice");
 
         WalletTransaction tx = service.topup(w.getId(), new BigDecimal("50.00"), "key-1");
 
@@ -118,7 +118,7 @@ class WalletServiceTest {
 
     @Test
     void topup_sameIdempotencyKeyTwice_appliesOnce() {
-        Wallet w = service.createWallet("Alice");
+        Wallet w = service.createWallet("user-1", "Alice");
         WalletTransaction first = service.topup(w.getId(), new BigDecimal("50.00"), "key-dup");
 
         WalletTransaction second = service.topup(w.getId(), new BigDecimal("50.00"), "key-dup");
@@ -131,7 +131,7 @@ class WalletServiceTest {
 
     @Test
     void withdraw_appendsLedger() {
-        Wallet w = service.createWallet("Bob");
+        Wallet w = service.createWallet("user-1", "Bob");
         service.topup(w.getId(), new BigDecimal("100.00"), "k1");
 
         WalletTransaction tx = service.withdraw(w.getId(), new BigDecimal("30.00"), "k2");
@@ -143,7 +143,7 @@ class WalletServiceTest {
 
     @Test
     void withdraw_sameIdempotencyKeyTwice_appliesOnce() {
-        Wallet w = service.createWallet("Bob");
+        Wallet w = service.createWallet("user-1", "Bob");
         service.topup(w.getId(), new BigDecimal("100.00"), "k-setup");
         WalletTransaction first = service.withdraw(w.getId(), new BigDecimal("30.00"), "w-dup");
 
@@ -157,8 +157,8 @@ class WalletServiceTest {
 
     @Test
     void sameIdempotencyKey_differentPayload_throwsConflictAndBalanceUnchanged() {
-        Wallet w = service.createWallet("Alice");
-        Wallet other = service.createWallet("Mallory");
+        Wallet w = service.createWallet("user-1", "Alice");
+        Wallet other = service.createWallet("user-1", "Mallory");
         service.topup(w.getId(), new BigDecimal("50.00"), "key-mix");
 
         // khác amount
@@ -179,7 +179,7 @@ class WalletServiceTest {
 
     @Test
     void sameIdempotencyKey_sameAmountDifferentScale_stillReplays() {
-        Wallet w = service.createWallet("Alice");
+        Wallet w = service.createWallet("user-1", "Alice");
         WalletTransaction first = service.topup(w.getId(), new BigDecimal("100"), "key-scale");
 
         WalletTransaction second = service.topup(w.getId(), new BigDecimal("100.00"), "key-scale");
@@ -191,7 +191,7 @@ class WalletServiceTest {
 
     @Test
     void moneyOperations_blankIdempotencyKey_throws() {
-        Wallet w = service.createWallet("Alice");
+        Wallet w = service.createWallet("user-1", "Alice");
         service.topup(w.getId(), new BigDecimal("10.00"), "key-fund");
 
         assertThrows(IllegalArgumentException.class, () -> service.topup(w.getId(), BigDecimal.ONE, ""));
@@ -204,7 +204,7 @@ class WalletServiceTest {
 
     @Test
     void withdraw_insufficient_throwsAndNoLedgerEntry() {
-        Wallet w = service.createWallet("Carol");
+        Wallet w = service.createWallet("user-1", "Carol");
 
         assertThrows(InsufficientFundsException.class,
                 () -> service.withdraw(w.getId(), new BigDecimal("1.00"), "k3"));

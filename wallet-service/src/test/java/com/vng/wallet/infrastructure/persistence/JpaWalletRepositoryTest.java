@@ -33,7 +33,7 @@ class JpaWalletRepositoryTest {
 
     @Test
     void saveThenFind_roundTripsThroughDatabase() {
-        Wallet saved = repository.save(Wallet.createNew("Alice"));
+        Wallet saved = repository.save(Wallet.createNew("user-1", "Alice"));
 
         assertNotNull(saved.getId());
 
@@ -53,7 +53,7 @@ class JpaWalletRepositoryTest {
 
     @Test
     void transactionRoundTrip_andIdempotencyLookup() {
-        Wallet w = repository.save(Wallet.createNew("Alice"));
+        Wallet w = repository.save(Wallet.createNew("user-1", "Alice"));
         WalletTransaction tx = repository.saveTransaction(new WalletTransaction(
                 null, w.getId(), WalletTransaction.Type.TOPUP,
                 new BigDecimal("50.00"), "key-abc", new BigDecimal("50.00"), Instant.now()));
@@ -69,7 +69,7 @@ class JpaWalletRepositoryTest {
 
     @Test
     void listTransactions_returnsRowsOrderedByCreatedAtAscending() {
-        Wallet w = repository.save(Wallet.createNew("Alice"));
+        Wallet w = repository.save(Wallet.createNew("user-1", "Alice"));
         Instant base = Instant.parse("2026-01-01T00:00:00Z");
         // Chèn CỐ TÌNH lệch thứ tự thời gian để chốt hợp đồng ORDER BY createdAt ASC
         repository.saveTransaction(new WalletTransaction(null, w.getId(),
@@ -89,7 +89,7 @@ class JpaWalletRepositoryTest {
 
     @Test
     void version_startsAtZero_andIncrementsOnUpdate() {
-        Wallet saved = repository.save(Wallet.createNew("Alice")); // ví mới: version = null
+        Wallet saved = repository.save(Wallet.createNew("user-1", "Alice")); // ví mới: version = null
         em.flush(); em.clear();
 
         Wallet reloaded = repository.findById(saved.getId()).orElseThrow();
@@ -106,7 +106,7 @@ class JpaWalletRepositoryTest {
 
     @Test
     void staleVersionWrite_throwsOptimisticLockingFailure() {
-        Wallet saved = repository.save(Wallet.createNew("Alice"));
+        Wallet saved = repository.save(Wallet.createNew("user-1", "Alice"));
         em.flush(); em.clear();
 
         Wallet current = repository.findById(saved.getId()).orElseThrow(); // version 0
@@ -114,7 +114,7 @@ class JpaWalletRepositoryTest {
         repository.save(current);
         em.flush(); em.clear(); // DB giờ ở version 1
 
-        Wallet stale = new Wallet(saved.getId(), "Alice", new BigDecimal("999.00"), 0L); // version cũ
+        Wallet stale = new Wallet(saved.getId(), "user-1", "Alice", new BigDecimal("999.00"), 0L); // version cũ
         assertThrows(org.springframework.dao.OptimisticLockingFailureException.class, () -> {
             repository.save(stale);
             walletJpa.flush(); // flush qua proxy Spring Data để có exception translation
@@ -123,7 +123,7 @@ class JpaWalletRepositoryTest {
 
     @Test
     void duplicateIdempotencyKey_violatesDbConstraint() {
-        Wallet w = repository.save(Wallet.createNew("Bob"));
+        Wallet w = repository.save(Wallet.createNew("user-1", "Bob"));
         repository.saveTransaction(new WalletTransaction(null, w.getId(),
                 WalletTransaction.Type.TOPUP, BigDecimal.ONE, "dup-key", BigDecimal.ONE, Instant.now()));
         em.flush(); // ghi bút toán đầu xuống DB trước

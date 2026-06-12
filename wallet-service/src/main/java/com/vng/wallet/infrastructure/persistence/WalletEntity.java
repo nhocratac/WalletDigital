@@ -18,6 +18,9 @@ public class WalletEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(name = "user_id", nullable = false)
+    private String userId;
+
     private String ownerName;
 
     @Column(precision = 38, scale = 2) // chốt scale tiền tệ tường minh (khớp NUMERIC(38,2) hiện tại)
@@ -30,8 +33,9 @@ public class WalletEntity {
     protected WalletEntity() {
     }
 
-    public WalletEntity(Long id, String ownerName, BigDecimal balance, Long version) {
+    public WalletEntity(Long id, String userId, String ownerName, BigDecimal balance, Long version) {
         this.id = id;
+        this.userId = userId;
         this.ownerName = ownerName;
         this.balance = balance;
         this.version = version;
@@ -39,6 +43,10 @@ public class WalletEntity {
 
     public Long getId() {
         return id;
+    }
+
+    public String getUserId() {
+        return userId;
     }
 
     public String getOwnerName() {

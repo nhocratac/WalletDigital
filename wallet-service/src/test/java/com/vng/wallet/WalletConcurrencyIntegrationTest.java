@@ -35,7 +35,7 @@ class WalletConcurrencyIntegrationTest {
 
     @Test
     void concurrentWithdraws_noLostUpdates_andLedgerMatchesSuccesses() throws Exception {
-        Wallet wallet = walletService.createWallet("ConcurrencyCarl");
+        Wallet wallet = walletService.createWallet("user-1", "ConcurrencyCarl");
         long walletId = wallet.getId();
         walletService.topup(walletId, new BigDecimal("100.00"), "cc-topup");
 
@@ -91,7 +91,7 @@ class WalletConcurrencyIntegrationTest {
 
     @Test
     void concurrentTopups_sameIdempotencyKey_allCallersGetWinnerTransaction() throws Exception {
-        Wallet wallet = walletService.createWallet("SameKeySam");
+        Wallet wallet = walletService.createWallet("user-1", "SameKeySam");
         long walletId = wallet.getId();
         String key = "same-key-race";
         BigDecimal amount = new BigDecimal("25.00");
@@ -137,7 +137,7 @@ class WalletConcurrencyIntegrationTest {
 
     @Test
     void reuseIdempotencyKey_differentPayload_throwsConflict() {
-        Wallet wallet = walletService.createWallet("ConflictCindy");
+        Wallet wallet = walletService.createWallet("user-1", "ConflictCindy");
         long walletId = wallet.getId();
         walletService.topup(walletId, new BigDecimal("40.00"), "reuse-key");
 
