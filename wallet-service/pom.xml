@@ -82,10 +82,28 @@
             <scope>test</scope>
         </dependency>
 
+        <!-- Kafka consumer cho event kyc.revoked (D5/D9) — bật bằng cờ wallet.events.kafka-enabled. -->
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka</artifactId>
+        </dependency>
+
         <!-- Test tools (JUnit etc.) — used when we write automated tests. -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- EmbeddedKafka: test consumer không cần Docker. -->
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Awaitility: chờ hành vi async (consumer evict cache). Version do Boot quản. -->
+        <dependency>
+            <groupId>org.awaitility</groupId>
+            <artifactId>awaitility</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>
