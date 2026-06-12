@@ -4,9 +4,11 @@ import com.vng.wallet.application.WalletService;
 import com.vng.wallet.domain.Wallet;
 import com.vng.wallet.domain.WalletTransaction;
 import com.vng.wallet.infrastructure.persistence.SpringDataWalletTransactionJpa;
+import com.vng.wallet.support.AllowAllKycGateTestConfig;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.dao.ConcurrencyFailureException;
 
 import java.math.BigDecimal;
@@ -28,6 +30,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * map ConcurrencyFailureException -> 409 ở tầng HTTP.
  */
 @SpringBootTest
+@Import(AllowAllKycGateTestConfig.class)   // mục đích file này là CONCURRENCY, không phải gate
 class WalletConcurrencyIntegrationTest {
 
     @Autowired WalletService walletService;
