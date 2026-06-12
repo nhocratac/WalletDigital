@@ -38,11 +38,6 @@ class WalletServiceTest {
         }
 
         @Override
-        public Optional<Wallet> findById(Long id) {
-            return Optional.ofNullable(store.get(id));
-        }
-
-        @Override
         public Optional<Wallet> findByIdAndUserId(Long id, String userId) {
             return Optional.ofNullable(store.get(id))
                     .filter(w -> userId != null && userId.equals(w.getUserId()));
@@ -114,7 +109,7 @@ class WalletServiceTest {
     void getWallet_returnsSavedWallet() {
         Wallet created = service.createWallet("user-1", "Bob");
 
-        Wallet found = service.getWallet(created.getId());
+        Wallet found = service.getWallet(created.getId(), "user-1");
 
         assertEquals(created.getId(), found.getId());
         assertEquals("Bob", found.getOwnerName());
@@ -123,105 +118,105 @@ class WalletServiceTest {
 
     @Test
     void getWallet_throwsWhenMissing() {
-        assertThrows(WalletNotFoundException.class, () -> service.getWallet(999L));
+        assertThrows(WalletNotFoundException.class, () -> service.getWallet(999L, "user-1"));
     }
 
     @Test
     void topup_appendsLedgerAndUpdatesBalance() {
         Wallet w = service.createWallet("user-1", "Alice");
 
-        WalletTransaction tx = service.topup(w.getId(), new BigDecimal("50.00"), "key-1");
+        WalletTransaction tx = service.topup(w.getId(), "user-1", new BigDecimal("50.00"), "key-1");
 
         assertEquals(WalletTransaction.Type.TOPUP, tx.type());
         assertEquals(0, new BigDecimal("50.00").compareTo(tx.balanceAfter()));
-        assertEquals(0, new BigDecimal("50.00").compareTo(service.getWallet(w.getId()).getBalance()));
-        assertEquals(1, service.listTransactions(w.getId()).size());
+        assertEquals(0, new BigDecimal("50.00").compareTo(service.getWallet(w.getId(), "user-1").getBalance()));
+        assertEquals(1, service.listTransactions(w.getId(), "user-1").size());
     }
 
     @Test
     void topup_sameIdempotencyKeyTwice_appliesOnce() {
         Wallet w = service.createWallet("user-1", "Alice");
-        WalletTransaction first = service.topup(w.getId(), new BigDecimal("50.00"), "key-dup");
+        WalletTransaction first = service.topup(w.getId(), "user-1", new BigDecimal("50.00"), "key-dup");
 
-        WalletTransaction second = service.topup(w.getId(), new BigDecimal("50.00"), "key-dup");
+        WalletTransaction second = service.topup(w.getId(), "user-1", new BigDecimal("50.00"), "key-dup");
 
         assertEquals(first.id(), second.id(), "trả lại bút toán CŨ, không tạo mới");
-        assertEquals(0, new BigDecimal("50.00").compareTo(service.getWallet(w.getId()).getBalance()),
+        assertEquals(0, new BigDecimal("50.00").compareTo(service.getWallet(w.getId(), "user-1").getBalance()),
                 "balance chỉ cộng MỘT lần");
-        assertEquals(1, service.listTransactions(w.getId()).size());
+        assertEquals(1, service.listTransactions(w.getId(), "user-1").size());
     }
 
     @Test
     void withdraw_appendsLedger() {
         Wallet w = service.createWallet("user-1", "Bob");
-        service.topup(w.getId(), new BigDecimal("100.00"), "k1");
+        service.topup(w.getId(), "user-1", new BigDecimal("100.00"), "k1");
 
-        WalletTransaction tx = service.withdraw(w.getId(), new BigDecimal("30.00"), "k2");
+        WalletTransaction tx = service.withdraw(w.getId(), "user-1", new BigDecimal("30.00"), "k2");
 
         assertEquals(WalletTransaction.Type.WITHDRAW, tx.type());
         assertEquals(0, new BigDecimal("70.00").compareTo(tx.balanceAfter()));
-        assertEquals(2, service.listTransactions(w.getId()).size());
+        assertEquals(2, service.listTransactions(w.getId(), "user-1").size());
     }
 
     @Test
     void withdraw_sameIdempotencyKeyTwice_appliesOnce() {
         Wallet w = service.createWallet("user-1", "Bob");
-        service.topup(w.getId(), new BigDecimal("100.00"), "k-setup");
-        WalletTransaction first = service.withdraw(w.getId(), new BigDecimal("30.00"), "w-dup");
+        service.topup(w.getId(), "user-1", new BigDecimal("100.00"), "k-setup");
+        WalletTransaction first = service.withdraw(w.getId(), "user-1", new BigDecimal("30.00"), "w-dup");
 
-        WalletTransaction second = service.withdraw(w.getId(), new BigDecimal("30.00"), "w-dup");
+        WalletTransaction second = service.withdraw(w.getId(), "user-1", new BigDecimal("30.00"), "w-dup");
 
         assertEquals(first.id(), second.id(), "retry tra lai but toan CU, khong tao moi");
         assertEquals(0, new BigDecimal("70.00").compareTo(second.balanceAfter()), "tra ve balanceAfter cua lan dau");
-        assertEquals(0, new BigDecimal("70.00").compareTo(service.getWallet(w.getId()).getBalance()), "balance chi tru MOT lan");
-        assertEquals(2, service.listTransactions(w.getId()).size(), "1 topup + 1 withdraw");
+        assertEquals(0, new BigDecimal("70.00").compareTo(service.getWallet(w.getId(), "user-1").getBalance()), "balance chi tru MOT lan");
+        assertEquals(2, service.listTransactions(w.getId(), "user-1").size(), "1 topup + 1 withdraw");
     }
 
     @Test
     void sameIdempotencyKey_differentPayload_throwsConflictAndBalanceUnchanged() {
         Wallet w = service.createWallet("user-1", "Alice");
         Wallet other = service.createWallet("user-1", "Mallory");
-        service.topup(w.getId(), new BigDecimal("50.00"), "key-mix");
+        service.topup(w.getId(), "user-1", new BigDecimal("50.00"), "key-mix");
 
         // khác amount
         assertThrows(IdempotencyKeyConflictException.class,
-                () -> service.topup(w.getId(), new BigDecimal("60.00"), "key-mix"));
+                () -> service.topup(w.getId(), "user-1", new BigDecimal("60.00"), "key-mix"));
         // khác type
         assertThrows(IdempotencyKeyConflictException.class,
-                () -> service.withdraw(w.getId(), new BigDecimal("50.00"), "key-mix"));
+                () -> service.withdraw(w.getId(), "user-1", new BigDecimal("50.00"), "key-mix"));
         // khác wallet
         assertThrows(IdempotencyKeyConflictException.class,
-                () -> service.topup(other.getId(), new BigDecimal("50.00"), "key-mix"));
+                () -> service.topup(other.getId(), "user-1", new BigDecimal("50.00"), "key-mix"));
 
-        assertEquals(0, new BigDecimal("50.00").compareTo(service.getWallet(w.getId()).getBalance()),
+        assertEquals(0, new BigDecimal("50.00").compareTo(service.getWallet(w.getId(), "user-1").getBalance()),
                 "balance KHONG doi khi key bi conflict");
-        assertEquals(0, BigDecimal.ZERO.compareTo(service.getWallet(other.getId()).getBalance()));
-        assertEquals(1, service.listTransactions(w.getId()).size());
+        assertEquals(0, BigDecimal.ZERO.compareTo(service.getWallet(other.getId(), "user-1").getBalance()));
+        assertEquals(1, service.listTransactions(w.getId(), "user-1").size());
     }
 
     @Test
     void sameIdempotencyKey_sameAmountDifferentScale_stillReplays() {
         Wallet w = service.createWallet("user-1", "Alice");
-        WalletTransaction first = service.topup(w.getId(), new BigDecimal("100"), "key-scale");
+        WalletTransaction first = service.topup(w.getId(), "user-1", new BigDecimal("100"), "key-scale");
 
-        WalletTransaction second = service.topup(w.getId(), new BigDecimal("100.00"), "key-scale");
+        WalletTransaction second = service.topup(w.getId(), "user-1", new BigDecimal("100.00"), "key-scale");
 
         assertEquals(first.id(), second.id(), "100 vs 100.00 la cung mot retry (compareTo semantics)");
-        assertEquals(0, new BigDecimal("100").compareTo(service.getWallet(w.getId()).getBalance()));
-        assertEquals(1, service.listTransactions(w.getId()).size());
+        assertEquals(0, new BigDecimal("100").compareTo(service.getWallet(w.getId(), "user-1").getBalance()));
+        assertEquals(1, service.listTransactions(w.getId(), "user-1").size());
     }
 
     @Test
     void moneyOperations_blankIdempotencyKey_throws() {
         Wallet w = service.createWallet("user-1", "Alice");
-        service.topup(w.getId(), new BigDecimal("10.00"), "key-fund");
+        service.topup(w.getId(), "user-1", new BigDecimal("10.00"), "key-fund");
 
-        assertThrows(IllegalArgumentException.class, () -> service.topup(w.getId(), BigDecimal.ONE, ""));
-        assertThrows(IllegalArgumentException.class, () -> service.topup(w.getId(), BigDecimal.ONE, null));
-        assertThrows(IllegalArgumentException.class, () -> service.topup(w.getId(), BigDecimal.ONE, "  "));
-        assertThrows(IllegalArgumentException.class, () -> service.withdraw(w.getId(), BigDecimal.ONE, ""));
-        assertThrows(IllegalArgumentException.class, () -> service.withdraw(w.getId(), BigDecimal.ONE, null));
-        assertThrows(IllegalArgumentException.class, () -> service.withdraw(w.getId(), BigDecimal.ONE, "  "));
+        assertThrows(IllegalArgumentException.class, () -> service.topup(w.getId(), "user-1", BigDecimal.ONE, ""));
+        assertThrows(IllegalArgumentException.class, () -> service.topup(w.getId(), "user-1", BigDecimal.ONE, null));
+        assertThrows(IllegalArgumentException.class, () -> service.topup(w.getId(), "user-1", BigDecimal.ONE, "  "));
+        assertThrows(IllegalArgumentException.class, () -> service.withdraw(w.getId(), "user-1", BigDecimal.ONE, ""));
+        assertThrows(IllegalArgumentException.class, () -> service.withdraw(w.getId(), "user-1", BigDecimal.ONE, null));
+        assertThrows(IllegalArgumentException.class, () -> service.withdraw(w.getId(), "user-1", BigDecimal.ONE, "  "));
     }
 
     @Test
@@ -229,7 +224,7 @@ class WalletServiceTest {
         Wallet w = service.createWallet("user-1", "Carol");
 
         assertThrows(InsufficientFundsException.class,
-                () -> service.withdraw(w.getId(), new BigDecimal("1.00"), "k3"));
-        assertEquals(0, service.listTransactions(w.getId()).size(), "thất bại -> KHÔNG có bút toán");
+                () -> service.withdraw(w.getId(), "user-1", new BigDecimal("1.00"), "k3"));
+        assertEquals(0, service.listTransactions(w.getId(), "user-1").size(), "thất bại -> KHÔNG có bút toán");
     }
 }

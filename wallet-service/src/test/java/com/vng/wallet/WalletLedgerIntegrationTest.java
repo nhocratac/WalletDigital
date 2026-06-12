@@ -32,22 +32,38 @@ class WalletLedgerIntegrationTest {
     }
 
     @Test
+    void withdraw_fromAnotherUsersWallet_returns404() throws Exception {
+        long id = createWallet("Alice"); // helper gửi X-User-Id: user-1
+        mockMvc.perform(post("/wallets/" + id + "/withdraw")
+                        .header("X-User-Id", "user-EVIL").header("Idempotency-Key", "evil-1")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":1.00}"))
+                .andExpect(status().isNotFound());   // KHÔNG phải 403 — D3
+    }
+
+    @Test
+    void createWallet_missingUserIdHeader_returns400() throws Exception {
+        mockMvc.perform(post("/wallets").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"ownerName\":\"X\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void fullFlow_topupWithdrawHistory() throws Exception {
         long id = createWallet("Alice");
 
-        mockMvc.perform(post("/wallets/" + id + "/topup")
+        mockMvc.perform(post("/wallets/" + id + "/topup").header("X-User-Id", "user-1")
                         .header("Idempotency-Key", "t1")
                         .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":100.00}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.balanceAfter").value(100.00));
 
-        mockMvc.perform(post("/wallets/" + id + "/withdraw")
+        mockMvc.perform(post("/wallets/" + id + "/withdraw").header("X-User-Id", "user-1")
                         .header("Idempotency-Key", "w1")
                         .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":30.00}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.balanceAfter").value(70.00));
 
-        mockMvc.perform(get("/wallets/" + id + "/transactions"))
+        mockMvc.perform(get("/wallets/" + id + "/transactions").header("X-User-Id", "user-1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(2))
                 .andExpect(jsonPath("$[0].type").value("TOPUP"))
@@ -57,7 +73,7 @@ class WalletLedgerIntegrationTest {
                 .andExpect(jsonPath("$[1].amount").value(30.00))
                 .andExpect(jsonPath("$[1].balanceAfter").value(70.00));
 
-        mockMvc.perform(get("/wallets/" + id))
+        mockMvc.perform(get("/wallets/" + id).header("X-User-Id", "user-1"))
                 .andExpect(jsonPath("$.balance").value(70.00));
     }
 
@@ -66,14 +82,14 @@ class WalletLedgerIntegrationTest {
         long id = createWallet("Bob");
         String body = "{\"amount\":50.00}";
 
-        mockMvc.perform(post("/wallets/" + id + "/topup").header("Idempotency-Key", "dup-http")
+        mockMvc.perform(post("/wallets/" + id + "/topup").header("X-User-Id", "user-1").header("Idempotency-Key", "dup-http")
                 .contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isOk());
-        mockMvc.perform(post("/wallets/" + id + "/topup").header("Idempotency-Key", "dup-http")
+        mockMvc.perform(post("/wallets/" + id + "/topup").header("X-User-Id", "user-1").header("Idempotency-Key", "dup-http")
                 .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.balanceAfter").value(50.00)); // kết quả CŨ, không cộng lần 2
 
-        mockMvc.perform(get("/wallets/" + id)).andExpect(jsonPath("$.balance").value(50.00));
+        mockMvc.perform(get("/wallets/" + id).header("X-User-Id", "user-1")).andExpect(jsonPath("$.balance").value(50.00));
         long count = txJpa.findAll().stream()
                 .filter(t -> t.getIdempotencyKey().equals("dup-http")).count();
         assertEquals(1, count, "DB chỉ có đúng 1 bút toán cho key này");
@@ -83,12 +99,12 @@ class WalletLedgerIntegrationTest {
     void withdraw_insufficient_returns422_andNoLedgerRow() throws Exception {
         long id = createWallet("Carol");
 
-        mockMvc.perform(post("/wallets/" + id + "/withdraw").header("Idempotency-Key", "x1")
+        mockMvc.perform(post("/wallets/" + id + "/withdraw").header("X-User-Id", "user-1").header("Idempotency-Key", "x1")
                         .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":5.00}"))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.error").exists());
 
-        mockMvc.perform(get("/wallets/" + id + "/transactions"))
+        mockMvc.perform(get("/wallets/" + id + "/transactions").header("X-User-Id", "user-1"))
                 .andExpect(jsonPath("$.length()").value(0));
 
         // Lần rút thất bại KHÔNG được ghi/giữ key -> kiểm tra qua DB, không qua API đang test
@@ -97,11 +113,11 @@ class WalletLedgerIntegrationTest {
         assertEquals(0, failedKeyRows, "withdraw thất bại không được ghi bút toán cho key x1");
 
         // Nạp tiền bằng key khác, rồi RETRY với CHÍNH key x1 -> phải thành công (key chưa bị chiếm)
-        mockMvc.perform(post("/wallets/" + id + "/topup").header("Idempotency-Key", "x1-fund")
+        mockMvc.perform(post("/wallets/" + id + "/topup").header("X-User-Id", "user-1").header("Idempotency-Key", "x1-fund")
                         .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":10.00}"))
                 .andExpect(status().isOk());
 
-        mockMvc.perform(post("/wallets/" + id + "/withdraw").header("Idempotency-Key", "x1")
+        mockMvc.perform(post("/wallets/" + id + "/withdraw").header("X-User-Id", "user-1").header("Idempotency-Key", "x1")
                         .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":5.00}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.balanceAfter").value(5.00));
@@ -113,12 +129,12 @@ class WalletLedgerIntegrationTest {
 
     @Test
     void moneyEndpoints_missingWallet_returns404_andNoLedgerRow() throws Exception {
-        mockMvc.perform(post("/wallets/999999/topup").header("Idempotency-Key", "nf-t")
+        mockMvc.perform(post("/wallets/999999/topup").header("X-User-Id", "user-1").header("Idempotency-Key", "nf-t")
                         .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":5.00}"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").exists());
 
-        mockMvc.perform(post("/wallets/999999/withdraw").header("Idempotency-Key", "nf-w")
+        mockMvc.perform(post("/wallets/999999/withdraw").header("X-User-Id", "user-1").header("Idempotency-Key", "nf-w")
                         .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":5.00}"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").exists());
@@ -130,7 +146,7 @@ class WalletLedgerIntegrationTest {
 
         // Chứng minh key chưa bị chiếm: retry "nf-t" với ví thật -> 200 và đúng 1 bút toán
         long id = createWallet("NotFoundNed");
-        mockMvc.perform(post("/wallets/" + id + "/topup").header("Idempotency-Key", "nf-t")
+        mockMvc.perform(post("/wallets/" + id + "/topup").header("X-User-Id", "user-1").header("Idempotency-Key", "nf-t")
                         .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":5.00}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.balanceAfter").value(5.00));
@@ -141,7 +157,7 @@ class WalletLedgerIntegrationTest {
 
     @Test
     void listTransactions_missingWallet_returns404() throws Exception {
-        mockMvc.perform(get("/wallets/999999/transactions"))
+        mockMvc.perform(get("/wallets/999999/transactions").header("X-User-Id", "user-1"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").exists());
     }
@@ -149,17 +165,17 @@ class WalletLedgerIntegrationTest {
     @Test
     void duplicateWithdrawIdempotencyKey_overHttp_appliesOnce() throws Exception {
         long id = createWallet("Frank");
-        mockMvc.perform(post("/wallets/" + id + "/topup").header("Idempotency-Key", "wd-setup")
+        mockMvc.perform(post("/wallets/" + id + "/topup").header("X-User-Id", "user-1").header("Idempotency-Key", "wd-setup")
                 .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":100.00}")).andExpect(status().isOk());
 
-        mockMvc.perform(post("/wallets/" + id + "/withdraw").header("Idempotency-Key", "wd-dup")
+        mockMvc.perform(post("/wallets/" + id + "/withdraw").header("X-User-Id", "user-1").header("Idempotency-Key", "wd-dup")
                 .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":30.00}")).andExpect(status().isOk());
-        mockMvc.perform(post("/wallets/" + id + "/withdraw").header("Idempotency-Key", "wd-dup")
+        mockMvc.perform(post("/wallets/" + id + "/withdraw").header("X-User-Id", "user-1").header("Idempotency-Key", "wd-dup")
                 .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":30.00}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.balanceAfter").value(70.00)); // ket qua CU, khong tru lan 2
 
-        mockMvc.perform(get("/wallets/" + id)).andExpect(jsonPath("$.balance").value(70.00));
+        mockMvc.perform(get("/wallets/" + id).header("X-User-Id", "user-1")).andExpect(jsonPath("$.balance").value(70.00));
         long count = txJpa.findAll().stream()
                 .filter(t -> t.getIdempotencyKey().equals("wd-dup")).count();
         assertEquals(1, count, "DB chi co dung 1 but toan WITHDRAW cho key nay");
@@ -168,17 +184,17 @@ class WalletLedgerIntegrationTest {
     @Test
     void sameIdempotencyKey_mismatchedPayload_returns422_andSingleLedgerRow() throws Exception {
         long id = createWallet("Grace");
-        mockMvc.perform(post("/wallets/" + id + "/topup").header("Idempotency-Key", "mm-key")
+        mockMvc.perform(post("/wallets/" + id + "/topup").header("X-User-Id", "user-1").header("Idempotency-Key", "mm-key")
                         .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":50.00}"))
                 .andExpect(status().isOk());
 
         // cùng key, amount khác -> 422, không thực thi
-        mockMvc.perform(post("/wallets/" + id + "/topup").header("Idempotency-Key", "mm-key")
+        mockMvc.perform(post("/wallets/" + id + "/topup").header("X-User-Id", "user-1").header("Idempotency-Key", "mm-key")
                         .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":60.00}"))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.error").exists());
 
-        mockMvc.perform(get("/wallets/" + id)).andExpect(jsonPath("$.balance").value(50.00));
+        mockMvc.perform(get("/wallets/" + id).header("X-User-Id", "user-1")).andExpect(jsonPath("$.balance").value(50.00));
         long count = txJpa.findAll().stream()
                 .filter(t -> t.getIdempotencyKey().equals("mm-key")).count();
         assertEquals(1, count, "ledger chi co dung 1 but toan cho key nay");
@@ -187,10 +203,10 @@ class WalletLedgerIntegrationTest {
     @Test
     void moneyEndpoints_blankIdempotencyKeyHeader_returns400() throws Exception {
         long id = createWallet("Heidi");
-        mockMvc.perform(post("/wallets/" + id + "/topup").header("Idempotency-Key", "")
+        mockMvc.perform(post("/wallets/" + id + "/topup").header("X-User-Id", "user-1").header("Idempotency-Key", "")
                         .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":5.00}"))
                 .andExpect(status().isBadRequest());
-        mockMvc.perform(post("/wallets/" + id + "/withdraw").header("Idempotency-Key", "")
+        mockMvc.perform(post("/wallets/" + id + "/withdraw").header("X-User-Id", "user-1").header("Idempotency-Key", "")
                         .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":5.00}"))
                 .andExpect(status().isBadRequest());
     }
@@ -198,7 +214,7 @@ class WalletLedgerIntegrationTest {
     @Test
     void topup_missingIdempotencyKeyHeader_returns400() throws Exception {
         long id = createWallet("Dave");
-        mockMvc.perform(post("/wallets/" + id + "/topup")
+        mockMvc.perform(post("/wallets/" + id + "/topup").header("X-User-Id", "user-1")
                         .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":5.00}"))
                 .andExpect(status().isBadRequest());
     }
@@ -206,7 +222,7 @@ class WalletLedgerIntegrationTest {
     @Test
     void topup_moreThanTwoDecimals_returns400() throws Exception {
         long id = createWallet("ScaleSue");
-        mockMvc.perform(post("/wallets/" + id + "/topup").header("Idempotency-Key", "sc-1")
+        mockMvc.perform(post("/wallets/" + id + "/topup").header("X-User-Id", "user-1").header("Idempotency-Key", "sc-1")
                         .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":0.005}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("amount must have at most 2 decimal places"));
@@ -217,26 +233,26 @@ class WalletLedgerIntegrationTest {
         long id = createWallet("ScaleSam");
         String body = "{\"amount\":10.05}";
 
-        MvcResult first = mockMvc.perform(post("/wallets/" + id + "/topup").header("Idempotency-Key", "sc-retry")
+        MvcResult first = mockMvc.perform(post("/wallets/" + id + "/topup").header("X-User-Id", "user-1").header("Idempotency-Key", "sc-retry")
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isOk()).andReturn();
         String firstTxId = first.getResponse().getContentAsString().replaceAll(".*\"id\":(\\d+).*", "$1");
 
         // retry cung key + cung body -> 200 voi CUNG transaction id (khong 422 do lech scale DB)
-        mockMvc.perform(post("/wallets/" + id + "/topup").header("Idempotency-Key", "sc-retry")
+        mockMvc.perform(post("/wallets/" + id + "/topup").header("X-User-Id", "user-1").header("Idempotency-Key", "sc-retry")
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(Long.parseLong(firstTxId)));
 
         // balance trong DB khop balanceAfter cua response (khong bi lam tron lech)
-        mockMvc.perform(get("/wallets/" + id))
+        mockMvc.perform(get("/wallets/" + id).header("X-User-Id", "user-1"))
                 .andExpect(jsonPath("$.balance").value(10.05));
     }
 
     @Test
     void topup_negativeAmount_returns400() throws Exception {
         long id = createWallet("Eve");
-        mockMvc.perform(post("/wallets/" + id + "/topup").header("Idempotency-Key", "n1")
+        mockMvc.perform(post("/wallets/" + id + "/topup").header("X-User-Id", "user-1").header("Idempotency-Key", "n1")
                         .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":-5.00}"))
                 .andExpect(status().isBadRequest());
     }

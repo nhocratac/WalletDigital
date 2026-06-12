@@ -5,6 +5,8 @@ import com.vng.wallet.domain.Wallet;
 import com.vng.wallet.domain.WalletNotFoundException;
 import com.vng.wallet.domain.WalletRepository;
 import com.vng.wallet.domain.WalletTransaction;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -16,9 +18,12 @@ import java.util.List;
 
 /**
  * USE CASES — điều phối nghiệp vụ. Phụ thuộc PORT (WalletRepository), không biết JPA.
+ * SP3: mọi truy cập ví đều scoped theo userId (D2) — sai chủ -> 404 + audit log (D3).
  */
 @Service
 public class WalletService {
+
+    private static final Logger log = LoggerFactory.getLogger(WalletService.class);
 
     private final WalletRepository walletRepository;
     private final TransactionTemplate txTemplate;
@@ -34,22 +39,25 @@ public class WalletService {
     }
 
     @Transactional(readOnly = true)
-    public Wallet getWallet(Long id) {
-        return walletRepository.findById(id)
-                .orElseThrow(() -> new WalletNotFoundException(id));
+    public Wallet getWallet(Long id, String userId) {
+        return walletRepository.findByIdAndUserId(id, userId)
+                .orElseThrow(() -> {
+                    log.warn("AUDIT forbidden-or-missing wallet access: walletId={}, callerUserId={}", id, userId);
+                    return new WalletNotFoundException(id);   // 404 — giấu tồn tại (D3)
+                });
     }
 
-    public WalletTransaction topup(Long walletId, BigDecimal amount, String idempotencyKey) {
-        return executeWithIdempotentRecovery(walletId, amount, idempotencyKey, WalletTransaction.Type.TOPUP);
+    public WalletTransaction topup(Long walletId, String userId, BigDecimal amount, String idempotencyKey) {
+        return executeWithIdempotentRecovery(walletId, userId, amount, idempotencyKey, WalletTransaction.Type.TOPUP);
     }
 
-    public WalletTransaction withdraw(Long walletId, BigDecimal amount, String idempotencyKey) {
-        return executeWithIdempotentRecovery(walletId, amount, idempotencyKey, WalletTransaction.Type.WITHDRAW);
+    public WalletTransaction withdraw(Long walletId, String userId, BigDecimal amount, String idempotencyKey) {
+        return executeWithIdempotentRecovery(walletId, userId, amount, idempotencyKey, WalletTransaction.Type.WITHDRAW);
     }
 
     @Transactional(readOnly = true)
-    public List<WalletTransaction> listTransactions(Long walletId) {
-        getWallet(walletId); // 404 nếu ví không tồn tại
+    public List<WalletTransaction> listTransactions(Long walletId, String userId) {
+        getWallet(walletId, userId); // 404 nếu ví không tồn tại / không thuộc caller
         return walletRepository.listTransactions(walletId);
     }
 
@@ -60,10 +68,10 @@ public class WalletService {
      * khớp payload -> trả lại bút toán cũ (idempotent recovery); không khớp -> 422;
      * người thắng cũng rollback -> ném lại DIVE -> 409 có kiểm soát.
      */
-    private WalletTransaction executeWithIdempotentRecovery(Long walletId, BigDecimal amount,
+    private WalletTransaction executeWithIdempotentRecovery(Long walletId, String userId, BigDecimal amount,
                                                             String idempotencyKey, WalletTransaction.Type type) {
         try {
-            return txTemplate.execute(status -> applyMoneyOperation(walletId, amount, idempotencyKey, type));
+            return txTemplate.execute(status -> applyMoneyOperation(walletId, userId, amount, idempotencyKey, type));
         } catch (DataIntegrityViolationException e) {
             // Transaction thất bại đã thoát (execute() đã return) -> recovery read an toàn.
             WalletTransaction winner = walletRepository.findTransactionByIdempotencyKey(idempotencyKey)
@@ -81,25 +89,30 @@ public class WalletService {
         }
     }
 
-    /**
-     * Cả balance (cache) + bút toán (sổ cái) ghi trong CÙNG transaction —
-     * cùng commit hoặc cùng rollback. Idempotency: key đã có -> trả bút toán cũ.
-     */
-    private WalletTransaction applyMoneyOperation(Long walletId, BigDecimal amount,
-                                                  String idempotencyKey, WalletTransaction.Type type) {
+    /** Các check review Stage 2 — key không blank, amount tối đa 2 chữ số thập phân. */
+    private static void validateKeyAndAmount(String idempotencyKey, BigDecimal amount) {
         if (idempotencyKey == null || idempotencyKey.isBlank()) {
             throw new IllegalArgumentException("Idempotency-Key must not be blank");
         }
         if (amount == null || amount.stripTrailingZeros().scale() > 2) {
             throw new IllegalArgumentException("amount must have at most 2 decimal places");
         }
+    }
+
+    /**
+     * Cả balance (cache) + bút toán (sổ cái) ghi trong CÙNG transaction —
+     * cùng commit hoặc cùng rollback. Idempotency: key đã có -> trả bút toán cũ.
+     */
+    private WalletTransaction applyMoneyOperation(Long walletId, String userId, BigDecimal amount,
+                                                  String idempotencyKey, WalletTransaction.Type type) {
+        validateKeyAndAmount(idempotencyKey, amount);
         var existing = walletRepository.findTransactionByIdempotencyKey(idempotencyKey);
         if (existing.isPresent()) {
             var tx = existing.get();
             requireMatchingTransaction(tx, walletId, type, amount);
             return tx; // true retry -> không áp lần hai
         }
-        Wallet wallet = getWallet(walletId);
+        Wallet wallet = getWallet(walletId, userId);
         if (type == WalletTransaction.Type.TOPUP) {
             wallet.topup(amount);
         } else {

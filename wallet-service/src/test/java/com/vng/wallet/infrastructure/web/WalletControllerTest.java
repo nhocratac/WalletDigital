@@ -62,9 +62,8 @@ class WalletControllerTest {
                     return new Wallet(1L, wallet.getUserId(), wallet.getOwnerName(), wallet.getBalance(), 0L);
                 }
 
-                @Override
-                public Optional<Wallet> findById(Long id) {
-                    // Stub: chỉ ví id=1 tồn tại (số dư 250.00); id khác -> rỗng -> 404.
+                // Helper stub (không còn trên port): chỉ ví id=1 tồn tại (số dư 250.00); id khác -> rỗng -> 404.
+                private Optional<Wallet> findById(Long id) {
                     if (id == 1L) {
                         return Optional.of(new Wallet(1L, "user-1", "Existing Owner", new BigDecimal("250.00"), 0L));
                     }
@@ -139,7 +138,7 @@ class WalletControllerTest {
 
     @Test
     void getExistingWallet_returns200WithBody() throws Exception {
-        mockMvc.perform(get("/wallets/1"))
+        mockMvc.perform(get("/wallets/1").header("X-User-Id", "user-1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(1))
                 .andExpect(jsonPath("$.ownerName").value("Existing Owner"))
@@ -148,7 +147,7 @@ class WalletControllerTest {
 
     @Test
     void getMissingWallet_returns404() throws Exception {
-        mockMvc.perform(get("/wallets/999999"))
+        mockMvc.perform(get("/wallets/999999").header("X-User-Id", "user-1"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("Wallet not found with id: 999999"));
     }
@@ -157,6 +156,7 @@ class WalletControllerTest {
     void withdraw_lockConflict_returns409() throws Exception {
         // Stub repository ném CannotAcquireLockException cho id=2 -> handler map ConcurrencyFailureException -> 409.
         mockMvc.perform(post("/wallets/2/withdraw")
+                        .header("X-User-Id", "user-1")
                         .header("Idempotency-Key", "lock-409")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"amount\":5.00}"))

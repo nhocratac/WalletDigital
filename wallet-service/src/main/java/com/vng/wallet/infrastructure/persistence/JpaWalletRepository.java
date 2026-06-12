@@ -31,11 +31,6 @@ public class JpaWalletRepository implements WalletRepository {
     }
 
     @Override
-    public Optional<Wallet> findById(Long id) {
-        return jpa.findById(id).map(mapper::toDomain);
-    }
-
-    @Override
     public Optional<Wallet> findByIdAndUserId(Long id, String userId) {
         return jpa.findByIdAndUserId(id, userId).map(mapper::toDomain);
     }

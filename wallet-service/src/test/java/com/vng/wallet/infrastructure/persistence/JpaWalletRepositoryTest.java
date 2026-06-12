@@ -65,7 +65,7 @@ class JpaWalletRepositoryTest {
         em.flush();   // push INSERT to DB
         em.clear();   // evict L1 cache so findById reloads from the row
 
-        Optional<Wallet> found = repository.findById(saved.getId());
+        Optional<Wallet> found = repository.findByIdAndUserId(saved.getId(), "user-1");
         assertTrue(found.isPresent());
         assertEquals("Alice", found.get().getOwnerName());
         assertEquals(0, BigDecimal.ZERO.compareTo(found.get().getBalance()));
@@ -73,7 +73,7 @@ class JpaWalletRepositoryTest {
 
     @Test
     void findById_emptyWhenMissing() {
-        assertTrue(repository.findById(999L).isEmpty());
+        assertTrue(repository.findByIdAndUserId(999L, "user-1").isEmpty());
     }
 
     @Test
@@ -117,14 +117,14 @@ class JpaWalletRepositoryTest {
         Wallet saved = repository.save(Wallet.createNew("user-1", "Alice")); // ví mới: version = null
         em.flush(); em.clear();
 
-        Wallet reloaded = repository.findById(saved.getId()).orElseThrow();
+        Wallet reloaded = repository.findByIdAndUserId(saved.getId(), "user-1").orElseThrow();
         assertEquals(0L, reloaded.getVersion(), "INSERT đầu tiên -> version 0");
 
         reloaded.topup(BigDecimal.TEN);
         repository.save(reloaded);
         em.flush(); em.clear();
 
-        Wallet afterUpdate = repository.findById(saved.getId()).orElseThrow();
+        Wallet afterUpdate = repository.findByIdAndUserId(saved.getId(), "user-1").orElseThrow();
         assertEquals(1L, afterUpdate.getVersion(), "UPDATE -> version tăng lên 1 (mapper/save không được làm rơi version)");
         assertEquals(0, BigDecimal.TEN.compareTo(afterUpdate.getBalance()));
     }
@@ -134,7 +134,7 @@ class JpaWalletRepositoryTest {
         Wallet saved = repository.save(Wallet.createNew("user-1", "Alice"));
         em.flush(); em.clear();
 
-        Wallet current = repository.findById(saved.getId()).orElseThrow(); // version 0
+        Wallet current = repository.findByIdAndUserId(saved.getId(), "user-1").orElseThrow(); // version 0
         current.topup(BigDecimal.TEN);
         repository.save(current);
         em.flush(); em.clear(); // DB giờ ở version 1

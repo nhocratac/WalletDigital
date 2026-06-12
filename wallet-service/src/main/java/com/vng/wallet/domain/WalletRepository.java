@@ -9,7 +9,6 @@ import java.util.Optional;
  */
 public interface WalletRepository {
     Wallet save(Wallet wallet);
-    Optional<Wallet> findById(Long id); // TODO(SP3 Task 3): xoá khi service chuyển hẳn sang scoped query
     Optional<Wallet> findByIdAndUserId(Long id, String userId);
     List<Wallet> findAllByUserId(String userId);
     List<WalletTransaction> findWithdrawalsForUserSince(String userId, java.time.Instant since);

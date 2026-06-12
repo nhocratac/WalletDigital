@@ -37,7 +37,7 @@ class WalletConcurrencyIntegrationTest {
     void concurrentWithdraws_noLostUpdates_andLedgerMatchesSuccesses() throws Exception {
         Wallet wallet = walletService.createWallet("user-1", "ConcurrencyCarl");
         long walletId = wallet.getId();
-        walletService.topup(walletId, new BigDecimal("100.00"), "cc-topup");
+        walletService.topup(walletId, "user-1", new BigDecimal("100.00"), "cc-topup");
 
         int n = 10;
         ExecutorService pool = Executors.newFixedThreadPool(n);
@@ -51,7 +51,7 @@ class WalletConcurrencyIntegrationTest {
             pool.submit(() -> {
                 try {
                     start.await();
-                    walletService.withdraw(walletId, new BigDecimal("10.00"), key);
+                    walletService.withdraw(walletId, "user-1", new BigDecimal("10.00"), key);
                     successCount.incrementAndGet();
                 } catch (Throwable t) {
                     failures.add(t);
@@ -78,7 +78,7 @@ class WalletConcurrencyIntegrationTest {
         // (c) balance = 100 - 10 * successCount (không lost update, không double debit)
         BigDecimal expected = new BigDecimal("100.00")
                 .subtract(new BigDecimal("10.00").multiply(BigDecimal.valueOf(successCount.get())));
-        assertEquals(0, walletService.getWallet(walletId).getBalance().compareTo(expected),
+        assertEquals(0, walletService.getWallet(walletId, "user-1").getBalance().compareTo(expected),
                 "balance phải khớp đúng số lần withdraw thành công");
 
         // (d) sổ cái: đúng successCount dòng WITHDRAW, loser rollback không để lại dòng mồ côi
@@ -107,7 +107,7 @@ class WalletConcurrencyIntegrationTest {
             pool.submit(() -> {
                 try {
                     start.await();
-                    results.add(walletService.topup(walletId, amount, key));
+                    results.add(walletService.topup(walletId, "user-1", amount, key));
                 } catch (Throwable t) {
                     failures.add(t);
                 } finally {
@@ -131,7 +131,7 @@ class WalletConcurrencyIntegrationTest {
         assertEquals(1, rows, "DB chi co dung 1 but toan cho key nay");
 
         // (c) balance chi cong MOT lan
-        assertEquals(0, amount.compareTo(walletService.getWallet(walletId).getBalance()),
+        assertEquals(0, amount.compareTo(walletService.getWallet(walletId, "user-1").getBalance()),
                 "balance phai phan anh dung MOT lan ap dung");
     }
 
@@ -139,16 +139,16 @@ class WalletConcurrencyIntegrationTest {
     void reuseIdempotencyKey_differentPayload_throwsConflict() {
         Wallet wallet = walletService.createWallet("user-1", "ConflictCindy");
         long walletId = wallet.getId();
-        walletService.topup(walletId, new BigDecimal("40.00"), "reuse-key");
+        walletService.topup(walletId, "user-1", new BigDecimal("40.00"), "reuse-key");
 
         // khac amount
         assertThrows(com.vng.wallet.domain.IdempotencyKeyConflictException.class,
-                () -> walletService.topup(walletId, new BigDecimal("41.00"), "reuse-key"));
+                () -> walletService.topup(walletId, "user-1", new BigDecimal("41.00"), "reuse-key"));
         // khac type
         assertThrows(com.vng.wallet.domain.IdempotencyKeyConflictException.class,
-                () -> walletService.withdraw(walletId, new BigDecimal("40.00"), "reuse-key"));
+                () -> walletService.withdraw(walletId, "user-1", new BigDecimal("40.00"), "reuse-key"));
 
-        assertEquals(0, new BigDecimal("40.00").compareTo(walletService.getWallet(walletId).getBalance()),
+        assertEquals(0, new BigDecimal("40.00").compareTo(walletService.getWallet(walletId, "user-1").getBalance()),
                 "balance KHONG doi khi key conflict");
     }
 }
