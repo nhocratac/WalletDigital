@@ -75,6 +75,27 @@ class WalletControllerTest {
                     return Optional.empty();
                 }
 
+                @Override
+                public Optional<Wallet> findByIdAndUserId(Long id, String userId) {
+                    return findById(id).filter(w -> userId != null && userId.equals(w.getUserId()));
+                }
+
+                @Override
+                public List<Wallet> findAllByUserId(String userId) {
+                    return findById(1L).filter(w -> userId != null && userId.equals(w.getUserId()))
+                            .map(List::of).orElse(List.of());
+                }
+
+                @Override
+                public List<WalletTransaction> findWithdrawalsForUserSince(String userId, java.time.Instant since) {
+                    List<Long> ids = findAllByUserId(userId).stream().map(Wallet::getId).toList();
+                    return transactions.stream()
+                            .filter(t -> ids.contains(t.walletId()))
+                            .filter(t -> t.type() == WalletTransaction.Type.WITHDRAW)
+                            .filter(t -> !t.createdAt().isBefore(since))
+                            .toList();
+                }
+
                 // In-memory ledger đơn giản cho stub.
                 private final List<WalletTransaction> transactions = new ArrayList<>();
                 private final Map<String, WalletTransaction> byKey = new HashMap<>();

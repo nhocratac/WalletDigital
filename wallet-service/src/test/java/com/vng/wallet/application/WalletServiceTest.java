@@ -43,6 +43,28 @@ class WalletServiceTest {
         }
 
         @Override
+        public Optional<Wallet> findByIdAndUserId(Long id, String userId) {
+            return Optional.ofNullable(store.get(id))
+                    .filter(w -> userId != null && userId.equals(w.getUserId()));
+        }
+
+        @Override
+        public List<Wallet> findAllByUserId(String userId) {
+            return store.values().stream()
+                    .filter(w -> userId != null && userId.equals(w.getUserId())).toList();
+        }
+
+        @Override
+        public List<WalletTransaction> findWithdrawalsForUserSince(String userId, java.time.Instant since) {
+            List<Long> ids = findAllByUserId(userId).stream().map(Wallet::getId).toList();
+            return transactions.stream()
+                    .filter(t -> ids.contains(t.walletId()))
+                    .filter(t -> t.type() == WalletTransaction.Type.WITHDRAW)
+                    .filter(t -> !t.createdAt().isBefore(since))
+                    .toList();
+        }
+
+        @Override
         public WalletTransaction saveTransaction(WalletTransaction transaction) {
             WalletTransaction saved = new WalletTransaction(
                     transaction.id() != null ? transaction.id() : txSeq.incrementAndGet(),

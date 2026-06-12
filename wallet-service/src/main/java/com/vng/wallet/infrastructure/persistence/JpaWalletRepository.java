@@ -36,6 +36,24 @@ public class JpaWalletRepository implements WalletRepository {
     }
 
     @Override
+    public Optional<Wallet> findByIdAndUserId(Long id, String userId) {
+        return jpa.findByIdAndUserId(id, userId).map(mapper::toDomain);
+    }
+
+    @Override
+    public List<Wallet> findAllByUserId(String userId) {
+        return jpa.findAllByUserId(userId).stream().map(mapper::toDomain).toList();
+    }
+
+    @Override
+    public List<WalletTransaction> findWithdrawalsForUserSince(String userId, java.time.Instant since) {
+        List<Long> ids = jpa.findAllByUserId(userId).stream().map(WalletEntity::getId).toList();
+        if (ids.isEmpty()) return List.of();
+        return txJpa.findByWalletIdInAndTypeAndCreatedAtGreaterThanEqual(ids, WalletTransaction.Type.WITHDRAW, since)
+                .stream().map(mapper::toDomain).toList();
+    }
+
+    @Override
     public WalletTransaction saveTransaction(WalletTransaction transaction) {
         return mapper.toDomain(txJpa.save(mapper.toEntity(transaction)));
     }
