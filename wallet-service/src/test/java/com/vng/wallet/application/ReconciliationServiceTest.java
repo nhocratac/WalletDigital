@@ -220,6 +220,41 @@ class ReconciliationServiceTest {
     }
 
     @Test
+    void sentUnknownPastThreshold_escalatesToManualReview_neverRefunds() {
+        // Task 6 (E9/E10): SENT đã UNKNOWN tới ngưỡng N -> NEEDS_MANUAL_REVIEW; tiền vẫn held (đóng băng);
+        // KHÔNG auto refund/settle. wallet.release KHÔNG được gọi.
+        Wallet w = seedWalletHeld30();
+        // Order đã ở MAX_ATTEMPTS-1 lần unknown trước đó; vòng này là lần thứ N -> chạm ngưỡng.
+        WithdrawalOrder o = orders.save(new WithdrawalOrder(null, "user-1", w.getId(), new BigDecimal("30"),
+                WithdrawalState.SENT, "wd-ref-1", "k1",
+                WithdrawalOrder.MAX_ATTEMPTS - 1, Instant.now(), null));
+        bank.statusResult = BankClient.BankStatus.UNKNOWN;
+
+        service.reconcile();
+
+        WithdrawalOrder after = orders.findById(o.getId()).orElseThrow();
+        assertEquals(WithdrawalState.NEEDS_MANUAL_REVIEW, after.getState(),
+                "quá ngưỡng UNKNOWN -> NEEDS_MANUAL_REVIEW");
+        assertEquals(WithdrawalOrder.MAX_ATTEMPTS, after.getAttemptCount());
+        Wallet wAfter = wallets.findById(w.getId()).orElseThrow();
+        assertEquals(0, new BigDecimal("30").compareTo(wAfter.getHeld()), "tiền vẫn held (đóng băng)");
+        assertEquals(0, new BigDecimal("100").compareTo(wAfter.getBalance()), "balance không đổi");
+        assertTrue(wallets.transactions.isEmpty(), "KHÔNG refund/settle -> không ledger terminal");
+    }
+
+    @Test
+    void manualReviewOrders_areNotReconciled() {
+        // findReconcilable KHÔNG trả NEEDS_MANUAL_REVIEW -> worker ngừng đụng (chờ người).
+        Wallet w = seedWalletHeld30();
+        seedOrder(w.getId(), WithdrawalState.NEEDS_MANUAL_REVIEW);
+
+        service.reconcile();
+
+        assertEquals(0, bank.statusCalls, "NEEDS_MANUAL_REVIEW -> worker không đụng bank");
+        assertEquals(0, bank.transferCalls);
+    }
+
+    @Test
     void terminalOrders_areSkipped() {
         // findReconcilable không trả SETTLED/FAILED/NEEDS_MANUAL_REVIEW -> worker bỏ qua.
         Wallet w = seedWalletHeld30();

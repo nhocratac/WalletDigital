@@ -6,6 +6,7 @@ import com.vng.wallet.domain.WalletRepository;
 import com.vng.wallet.domain.WalletTransaction;
 import com.vng.wallet.domain.WithdrawalOrder;
 import com.vng.wallet.domain.WithdrawalOrderRepository;
+import com.vng.wallet.domain.WithdrawalState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.OptimisticLockingFailureException;
@@ -84,6 +85,7 @@ public class WithdrawalSettlementService {
                 return;
             }
             order.recordUnknownAttempt();
+            order.escalateIfExhausted(); // E10: quá ngưỡng N/T -> NEEDS_MANUAL_REVIEW (KHÔNG đổi tiền)
             orderRepository.save(order);
         });
     }
@@ -95,6 +97,22 @@ public class WithdrawalSettlementService {
     public void applyTerminal(Long orderId, BankClient.BankStatus outcome) {
         WithdrawalOrder order = orderRepository.findById(orderId).orElseThrow();
         applyTerminalOn(order, outcome);
+    }
+
+    /**
+     * E10 admin resolve: con người quyết một order in-doubt (thường NEEDS_MANUAL_REVIEW) — đi qua
+     * ĐÚNG cửa nguyên tử {@link #applyTerminal} (worker × webhook × admin chung một cửa, exactly-once).
+     * {@code decision} SETTLED -> settle; FAILED -> refund. Trả order sau khi áp để controller phản hồi.
+     */
+    public WithdrawalOrder resolveManual(Long orderId, WithdrawalState decision) {
+        BankClient.BankStatus outcome = switch (decision) {
+            case SETTLED -> BankClient.BankStatus.SETTLED;
+            case FAILED -> BankClient.BankStatus.REJECTED;
+            default -> throw new IllegalArgumentException(
+                    "admin decision chỉ nhận SETTLED|FAILED, got " + decision);
+        };
+        applyTerminal(orderId, outcome);
+        return orderRepository.findById(orderId).orElseThrow();
     }
 
     /**
