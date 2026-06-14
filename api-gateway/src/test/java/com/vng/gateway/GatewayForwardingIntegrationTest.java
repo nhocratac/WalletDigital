@@ -73,6 +73,7 @@ class GatewayForwardingIntegrationTest {
         assertNotNull(forwarded);
         assertEquals("/wallets/1", forwarded.getPath());
         assertEquals("acme", forwarded.getHeader("X-Tenant-Id"));   // bóc từ JWT
+        assertEquals("user-1", forwarded.getHeader("X-User-Id"));   // bóc từ JWT sub (D1) — downstream định danh user
         assertEquals("api-gateway", forwarded.getHeader("X-Service-Id"));
         String fwdTs = forwarded.getHeader("X-Timestamp");
         assertNotNull(fwdTs);

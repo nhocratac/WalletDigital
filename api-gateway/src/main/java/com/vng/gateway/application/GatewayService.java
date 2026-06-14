@@ -74,6 +74,7 @@ public class GatewayService {
         headers.put("X-Timestamp", timestamp);
         headers.put("X-Signature", signature);
         headers.put("X-Tenant-Id", caller.tenantId());   // bóc từ JWT, KHÔNG từ client
+        headers.put("X-User-Id", caller.userId());        // bóc từ JWT sub — downstream định danh user (D1)
         headers.put("X-Trace-Id", traceId);
 
         return downstreamClient.forward(
