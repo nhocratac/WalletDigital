@@ -59,13 +59,13 @@ class WalletControllerTest {
                 @Override
                 public Wallet save(Wallet wallet) {
                     // Stub: gán id cố định, giữ nguyên userId + ownerName + balance (0 cho ví mới).
-                    return new Wallet(1L, wallet.getUserId(), wallet.getOwnerName(), wallet.getBalance(), 0L);
+                    return new Wallet(1L, wallet.getUserId(), wallet.getOwnerName(), wallet.getBalance(), wallet.getHeld(), 0L);
                 }
 
                 // Helper stub (không còn trên port): chỉ ví id=1 tồn tại (số dư 250.00); id khác -> rỗng -> 404.
                 private Optional<Wallet> findById(Long id) {
                     if (id == 1L) {
-                        return Optional.of(new Wallet(1L, "user-1", "Existing Owner", new BigDecimal("250.00"), 0L));
+                        return Optional.of(new Wallet(1L, "user-1", "Existing Owner", new BigDecimal("250.00"), BigDecimal.ZERO, 0L));
                     }
                     // Stub: id=2 mô phỏng thua tranh chấp lock ở tầng hạ tầng -> 409.
                     if (id == 2L) {

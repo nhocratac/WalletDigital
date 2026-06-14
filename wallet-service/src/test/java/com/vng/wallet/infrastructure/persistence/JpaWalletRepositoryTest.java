@@ -139,7 +139,7 @@ class JpaWalletRepositoryTest {
         repository.save(current);
         em.flush(); em.clear(); // DB giờ ở version 1
 
-        Wallet stale = new Wallet(saved.getId(), "user-1", "Alice", new BigDecimal("999.00"), 0L); // version cũ
+        Wallet stale = new Wallet(saved.getId(), "user-1", "Alice", new BigDecimal("999.00"), BigDecimal.ZERO, 0L); // version cũ
         assertThrows(org.springframework.dao.OptimisticLockingFailureException.class, () -> {
             repository.save(stale);
             walletJpa.flush(); // flush qua proxy Spring Data để có exception translation

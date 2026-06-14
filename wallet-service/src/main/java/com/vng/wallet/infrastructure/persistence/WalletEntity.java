@@ -26,6 +26,10 @@ public class WalletEntity {
     @Column(precision = 38, scale = 2) // chốt scale tiền tệ tường minh (khớp NUMERIC(38,2) hiện tại)
     private BigDecimal balance;
 
+    // SP4 escrow (E2): phan dang giu cho order PENDING/SENT. available = balance - held (dan xuat, khong luu).
+    @Column(precision = 38, scale = 2, nullable = false, columnDefinition = "numeric(38,2) default 0")
+    private BigDecimal held;
+
     // Optimistic lock: Hibernate so sánh version khi UPDATE; lệch -> OptimisticLockException.
     @Version
     private Long version;
@@ -33,11 +37,12 @@ public class WalletEntity {
     protected WalletEntity() {
     }
 
-    public WalletEntity(Long id, String userId, String ownerName, BigDecimal balance, Long version) {
+    public WalletEntity(Long id, String userId, String ownerName, BigDecimal balance, BigDecimal held, Long version) {
         this.id = id;
         this.userId = userId;
         this.ownerName = ownerName;
         this.balance = balance;
+        this.held = held == null ? BigDecimal.ZERO : held;
         this.version = version;
     }
 
@@ -55,6 +60,10 @@ public class WalletEntity {
 
     public BigDecimal getBalance() {
         return balance;
+    }
+
+    public BigDecimal getHeld() {
+        return held;
     }
 
     public Long getVersion() {
