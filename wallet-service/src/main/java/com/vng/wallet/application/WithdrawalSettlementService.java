@@ -76,7 +76,8 @@ public class WithdrawalSettlementService {
         });
     }
 
-    private void recordUnknown(Long orderId) {
+    /** UNKNOWN ("unknown != failed", E9): giữ SENT, chỉ đếm attempt. Dùng bởi reconciliation worker. */
+    public void recordUnknown(Long orderId) {
         txTemplate.executeWithoutResult(status -> {
             WithdrawalOrder order = orderRepository.findById(orderId).orElseThrow();
             if (order.getState().isTerminal()) {
