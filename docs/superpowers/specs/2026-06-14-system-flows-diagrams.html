@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hệ Ví — Sơ đồ luồng (Sequence / State / Flow)</title>
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: true, theme: 'dark', sequence: { showSequenceNumbers: true } });
+</script>
+<style>
+  :root{--bg:#0f1117;--card:#171a21;--ink:#e6e6e6;--muted:#9aa4b2;--accent:#7c9cff;--accent2:#5be7c4;--line:#2a2f3a;--yellow:#ffd166;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;line-height:1.6;font-size:16px;}
+  .wrap{max-width:1040px;margin:0 auto;padding:44px 24px 96px}
+  header.hero{background:linear-gradient(135deg,#1b2030,#11141c);border:1px solid var(--line);border-radius:16px;padding:30px;margin-bottom:28px;}
+  header.hero h1{margin:0 0 8px;font-size:28px}
+  .meta{color:var(--muted);font-size:14px;margin-top:10px}
+  h2{margin:40px 0 6px;font-size:21px;padding-bottom:8px;border-bottom:1px solid var(--line);color:#fff;}
+  h2 .num{color:var(--accent);margin-right:8px}
+  p{color:var(--ink)} p.lead{color:var(--muted);margin:6px 0 14px}
+  .diagram{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin:14px 0;overflow-x:auto}
+  .mermaid{display:flex;justify-content:center}
+  blockquote{margin:14px 0;padding:12px 16px;border-left:4px solid var(--yellow);background:rgba(255,209,102,.08);border-radius:0 10px 10px 0;color:#cfd6e4;}
+  blockquote strong{color:var(--yellow)}
+  code{background:rgba(255,255,255,.07);padding:2px 6px;border-radius:5px;font-size:13.5px;font-family:"SF Mono",Menlo,Consolas,monospace;color:var(--accent2)}
+  .toc{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 20px;columns:2;font-size:14px}
+  .toc a{color:var(--accent);text-decoration:none} .toc a:hover{text-decoration:underline}
+  footer{margin-top:48px;color:var(--muted);font-size:13px;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <h1>🗺️ Hệ Ví Multi-Tenant — Sơ đồ luồng</h1>
+    <div class="meta">📅 2026-06-14 · Sequence / State / Flow diagram cho toàn bộ flow đã xây · Mermaid (render trong browser)</div>
+  </header>
+
+  <div class="toc">
+    <a href="#s1">1. Kiến trúc tổng (flow)</a><br>
+    <a href="#s2">2. Tạo ví &amp; định danh user</a><br>
+    <a href="#s3">3. KYC — xác minh bất đồng bộ</a><br>
+    <a href="#s4">4. Withdraw qua cổng KYC ⭐</a><br>
+    <a href="#s5">5. Revoke → Kafka → evict + compensation</a><br>
+    <a href="#s6">6. KYC state machine</a><br>
+    <a href="#s7">7. Idempotency race recovery</a>
+  </div>
+
+  <h2 id="s1"><span class="num">1.</span>Kiến trúc tổng thể</h2>
+  <p class="lead">Ai gọi ai, đồng bộ (mũi tên đặc) vs bất đồng bộ qua Kafka. Gateway xác thực <i>người dùng</i>; mỗi service tin nhau qua HMAC.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart TB
+    U(["Người dùng"]) -->|JWT RS256| GW["api-gateway :8081"]
+    CO(["Compliance"]) -->|JWT role=compliance| GW
+    V(["Verifier bên thứ 3"]) -->|webhook + HMAC verifier| K["kyc-service :8082"]
+    GW -->|HMAC + X-User-Id| W["wallet-service :8080"]
+    GW -->|HMAC + X-Roles| K
+    W -->|"sync GET status<br/>(breaker + cache)"| K
+    K -.->|publish kyc.revoked| KB[("Kafka<br/>kyc.revoked")]
+    KB -.->|consume| W
+    W --> WDB[("Wallet DB")]
+    K --> KDB[("KYC DB")]
+  </pre></div>
+  <blockquote><strong>Đọc:</strong> nét đặc = gọi đồng bộ (REST). Nét đứt = bất đồng bộ (event Kafka). Để ý wallet gọi kyc <b>đồng bộ</b> (hỏi status lúc rút) NHƯNG nhận revoke <b>bất đồng bộ</b> — hai chiều, hai cơ chế.</blockquote>
+
+  <h2 id="s2"><span class="num">2.</span>Tạo ví &amp; định danh user (D1)</h2>
+  <p class="lead">JWT không bao giờ tới wallet. Gateway bóc <code>userId</code> từ claim, gắn vào header đã ký. Wallet tin header vì chữ ký HMAC, không tin client.</p>
+  <div class="diagram"><pre class="mermaid">
+sequenceDiagram
+    autonumber
+    actor U as Người dùng
+    participant GW as api-gateway
+    participant W as wallet-service
+    participant DB as Wallet DB
+    U->>GW: POST /api/wallets + JWT
+    GW->>GW: verify JWT (RS256) bằng public key
+    GW->>GW: bóc claim sub -> userId
+    GW->>W: POST /wallets + X-User-Id=A + X-Signature
+    W->>DB: lưu ví gắn userId=A (balance 0)
+    W-->>U: 201 wallet
+  </pre></div>
+  <blockquote><strong>Bài học:</strong> client gửi <code>userId</code> trong body thì user A mạo danh user B được. Lấy từ JWT (gateway đã verify) là nguồn DUY NHẤT đáng tin.</blockquote>
+
+  <h2 id="s3"><span class="num">3.</span>KYC — xác minh bất đồng bộ (SP2)</h2>
+  <p class="lead">Nộp hồ sơ xong KHÔNG biết khi nào duyệt xong → verifier chủ động gọi webhook báo kết quả (Hollywood principle: "đừng gọi tôi, tôi gọi anh").</p>
+  <div class="diagram"><pre class="mermaid">
+sequenceDiagram
+    autonumber
+    actor U as Người dùng
+    participant GW as api-gateway
+    participant K as kyc-service
+    participant V as Verifier (bên thứ 3)
+    participant DB as KYC DB
+    U->>GW: POST /kyc/submissions (giấy tờ) + JWT
+    GW->>K: forward + X-User-Id + HMAC
+    K->>DB: lưu KycSubmission (bất biến), case = PENDING
+    K->>V: đẩy hồ sơ đi xác minh
+    K-->>U: 201 submissionId (đang PENDING)
+    Note over V: duyệt (auto / người) — vài phút đến vài giờ
+    V->>K: POST /kyc/webhooks/decision + HMAC (secret RIÊNG verifier)
+    K->>K: WebhookAuthFilter verify chữ ký verifier
+    alt đã có decision cho submission (verifier retry)
+        K-->>V: 200 DUPLICATE_IGNORED
+    else submission lạc hậu (user đã nộp lại)
+        K-->>V: 200 STALE_IGNORED
+    else hợp lệ
+        K->>DB: ghi KycDecision + case PENDING -> APPROVED/REJECTED
+        K-->>V: 200 APPLIED
+    end
+  </pre></div>
+  <blockquote><strong>Bài học:</strong> webhook luôn trả <b>200</b> cho trùng/lạc hậu — vì 4xx khiến verifier retry vô hạn. Mã HTTP ở webhook là tín hiệu điều khiển retry của đối tác.</blockquote>
+
+  <h2 id="s4"><span class="num">4.</span>⭐ Withdraw qua cổng KYC (SP3 — luồng trung tâm)</h2>
+  <p class="lead">Gộp mọi quyết định: idempotency → AuthZ ví → cổng KYC NGOÀI transaction (cache + breaker, fail-closed) → transaction trừ tiền. Theo dõi các nhánh rẽ.</p>
+  <div class="diagram"><pre class="mermaid">
+sequenceDiagram
+    autonumber
+    actor U as Người dùng
+    participant GW as api-gateway
+    participant W as wallet-service
+    participant C as Cache (Caffeine)
+    participant CB as CircuitBreaker
+    participant K as kyc-service
+    participant DB as Wallet DB
+    U->>GW: POST /api/wallets/7/withdraw + JWT + Idempotency-Key
+    GW->>W: forward + X-User-Id=A + HMAC
+    Note over W: [0] Idempotency replay (ngoài tx)
+    alt key đã tồn tại
+        W-->>U: trả bút toán CŨ (KHÔNG gọi KYC)
+    else key mới
+        Note over W: [1] Scoped load ví 7 theo userId A
+        alt ví 7 không thuộc A
+            W-->>U: 404 + audit log nội bộ
+        else ví hợp lệ
+            Note over W,K: [2] CỔNG KYC — NGOÀI transaction (D4)
+            W->>C: có APPROVED(A) trong cache?
+            alt cache hit
+                C-->>W: APPROVED
+            else cache miss
+                W->>CB: check(A)
+                alt breaker MỞ
+                    CB-->>W: fail-fast (không gọi KYC)
+                    W-->>U: 503 + Retry-After
+                else breaker đóng
+                    CB->>K: GET /kyc/cases/A/status + HMAC
+                    alt APPROVED
+                        K-->>W: APPROVED
+                        W->>C: ghi cache APPROVED(A)
+                    else PENDING / REJECTED / REVOKED
+                        K-->>W: trạng thái khác
+                        W-->>U: 403 + status
+                    end
+                end
+            end
+            Note over W,DB: [3] TRANSACTION (ngắn, không network)
+            W->>DB: trừ tiền + ghi ledger (cùng 1 tx)
+            DB-->>W: commit
+            W-->>U: 200 TransactionResponse
+        end
+    end
+  </pre></div>
+  <blockquote><strong>Bài học:</strong> cú gọi KYC nằm <b>NGOÀI</b> transaction (D4 — tránh giữ connection pool khi gọi mạng). Breaker mở + cache hit vẫn rút được = "cache thoát hiểm" khi KYC chết. 503 (không kiểm được) khác 403 (không đủ điều kiện).</blockquote>
+
+  <h2 id="s5"><span class="num">5.</span>Revoke → Kafka → evict cache + compensation (D5, D9)</h2>
+  <p class="lead">Compliance thu hồi KYC → phát event bền qua Kafka → wallet xoá cache (chặn rút tiếp) + quét ledger tìm giao dịch lọt khe.</p>
+  <div class="diagram"><pre class="mermaid">
+sequenceDiagram
+    autonumber
+    actor CO as Compliance
+    participant GW as api-gateway
+    participant K as kyc-service
+    participant KB as Kafka (kyc.revoked)
+    participant W as wallet-service
+    participant C as Cache
+    participant L as Wallet Ledger
+    CO->>GW: POST /kyc/cases/A/revoke + JWT(role=compliance)
+    GW->>K: forward + X-Roles=compliance + HMAC
+    K->>K: kiểm role compliance (AuthZ, không chỉ AuthN)
+    K->>K: case APPROVED -> REVOKED + ghi KycDecision
+    K->>KB: publish kyc.revoked (key=A, acks=all)
+    K-->>CO: 200
+    Note over KB,W: Kafka GIỮ event — wallet chết rồi sống lại vẫn nhận (offset)
+    KB->>W: deliver kyc.revoked
+    W->>C: evict(A) — tự nhiên idempotent, trùng vô hại
+    W->>L: quét WITHDRAW của A sau revokedAt
+    alt có giao dịch nghi vấn (lọt khe)
+        W->>W: log COMPENSATION-ALERT (detect & compensate)
+    end
+  </pre></div>
+  <blockquote><strong>Bài học:</strong> khe hở "revoke đuổi không kịp withdraw" là <b>bản chất hệ phân tán</b>, không triệt tiêu được — chỉ thu nhỏ (event) + bù (compensation từ ledger). "Xoá cache" tự nhiên idempotent nên consumer KHÔNG cần dedup.</blockquote>
+
+  <h2 id="s6"><span class="num">6.</span>KYC State Machine</h2>
+  <p class="lead">Luật chuyển trạng thái ép TRONG domain <code>KycCase</code> — mọi mũi tên KHÔNG vẽ ở đây đều bị <code>InvalidKycTransitionException</code> chặn (ma trận test 20 ô).</p>
+  <div class="diagram"><pre class="mermaid">
+stateDiagram-v2
+    [*] --> NOT_STARTED
+    NOT_STARTED --> PENDING: submit
+    REJECTED --> PENDING: submit (nộp lại)
+    REVOKED --> PENDING: submit (nộp lại)
+    PENDING --> APPROVED: approve (webhook)
+    PENDING --> REJECTED: reject (webhook)
+    APPROVED --> REVOKED: revoke (compliance)
+    note right of APPROVED: chỉ trạng thái này<br/>wallet cho rút tiền
+  </pre></div>
+  <blockquote><strong>Bài học:</strong> "make illegal states unrepresentable" — vd REJECTED không thể nhảy thẳng APPROVED (phải submit lại → PENDING → approve). Bug compliance hay nằm ở transition lẽ ra bị cấm mà lại đi được.</blockquote>
+
+  <h2 id="s7"><span class="num">7.</span>Idempotency Race Recovery (ca hiếm nhất)</h2>
+  <p class="lead">Hai request cùng key đua nhau. <code>UNIQUE(key)</code> ở DB là trọng tài. Nhánh dưới là ca "người thắng cũng rollback".</p>
+  <div class="diagram"><pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant T1 as Request 1 (key k1)
+    participant T2 as Request 2 (key k1)
+    participant DB as DB UNIQUE(key)
+    par hai request đua đồng thời
+        T1->>DB: INSERT bút toán k1
+        T2->>DB: INSERT bút toán k1
+    end
+    DB-->>T1: OK (thắng cú INSERT)
+    DB-->>T2: DataIntegrityViolation (thua)
+    Note over T2: recovery — đọc lại bút toán k1
+    alt T1 đã commit thành công
+        T2->>DB: SELECT k1
+        DB-->>T2: bút toán của T1
+        T2->>T2: payload khớp -> trả 200 / lệch -> 409
+    else T1 CŨNG rollback (đụng @Version, rớt kết nối...)
+        T2->>DB: SELECT k1
+        DB-->>T2: RỖNG (bút toán T1 đã bốc hơi)
+        T2->>T2: ném lại DIVE -> 409 "retry được"
+    end
+  </pre></div>
+  <blockquote><strong>Bài học:</strong> "thắng cú INSERT" ≠ "commit thành công". Recovery cũng có thể thất bại — và nhánh thất-bại-của-recovery cũng phải có câu trả lời tử tế (409 thay vì 500 thô).</blockquote>
+
+  <footer>Generated for học tập · Mermaid sequence/state/flow · 2026-06-14 · mở bằng trình duyệt để xem render</footer>
+</div>
+</body>
+</html>
