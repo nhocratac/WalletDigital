@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WalletDigital — Tài liệu thiết kế hệ thống</title>
+<style>
+  :root{--bg:#0f1117;--card:#171a21;--ink:#e6e6e6;--muted:#9aa4b2;--accent:#7c9cff;--accent2:#5be7c4;--line:#2a2f3a;--yellow:#ffd166;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;line-height:1.6;font-size:16px;}
+  .wrap{max-width:1040px;margin:0 auto;padding:44px 24px 96px}
+  header.hero{background:linear-gradient(135deg,#1b2030,#11141c);border:1px solid var(--line);border-radius:16px;padding:34px;margin-bottom:28px;}
+  header.hero h1{margin:0 0 8px;font-size:30px}
+  header.hero p{color:var(--muted);margin:6px 0 0;font-size:15px}
+  h2{margin:38px 0 14px;font-size:20px;padding-bottom:8px;border-bottom:1px solid var(--line);color:#fff;}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+  a.card{display:block;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px;text-decoration:none;color:var(--ink);transition:.15s;}
+  a.card:hover{border-color:var(--accent);transform:translateY(-2px);background:#1b1f28}
+  a.card .ico{font-size:26px}
+  a.card h3{margin:8px 0 4px;font-size:17px;color:#fff}
+  a.card .d{color:var(--muted);font-size:13.5px}
+  a.card .date{display:inline-block;margin-top:10px;font-size:12px;color:var(--accent2);background:rgba(91,231,196,.1);border:1px solid rgba(91,231,196,.25);border-radius:999px;padding:1px 9px}
+  .star{border-color:rgba(255,209,102,.4)} .star .date{color:var(--yellow);background:rgba(255,209,102,.1);border-color:rgba(255,209,102,.3)}
+  .stack{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+  .stack span{font-size:12px;color:var(--muted);background:rgba(255,255,255,.05);border:1px solid var(--line);border-radius:6px;padding:2px 8px}
+  footer{margin-top:48px;color:var(--muted);font-size:13px;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <h1>🏦 WalletDigital — Tài liệu thiết kế</h1>
+    <p>Hệ ví số multi-tenant · 3 microservice (api-gateway · wallet · kyc) + Kafka · ~156 unit/integration test + e2e thật 7/7.</p>
+    <p>Mọi quyết định kiến trúc được suy ra qua brainstorm Socratic — học để trở thành Software Architect.</p>
+    <div class="stack">
+      <span>Java 25</span><span>Spring Boot 3.4</span><span>Clean Architecture</span><span>Kafka (KRaft)</span>
+      <span>Resilience4j</span><span>Caffeine</span><span>MapStruct</span><span>HMAC + JWT RS256</span>
+    </div>
+  </header>
+
+  <h2>📐 Design Docs (HTML — render trực tiếp, có Mermaid)</h2>
+  <div class="grid">
+
+    <a class="card star" href="docs/superpowers/specs/2026-06-14-system-flows-diagrams.html">
+      <div class="ico">🗺️</div>
+      <h3>System Flows — Sơ đồ luồng toàn hệ</h3>
+      <div class="d">7 sequence/state/flow diagram: kiến trúc tổng, tạo ví, KYC bất đồng bộ, withdraw qua cổng KYC, revoke→Kafka, state machine, idempotency race.</div>
+      <span class="date">2026-06-14 · tổng hợp</span>
+    </a>
+
+    <a class="card star" href="docs/superpowers/specs/2026-06-14-sp4-delayed-settlement-design.html">
+      <div class="ico">💸</div>
+      <h3>SP4 — Delayed Settlement</h3>
+      <div class="d">Withdraw từ "tức thời" → state machine bất đồng bộ: escrow, available/held, reconciliation worker self-healing, idempotency 2 tầng, "unknown ≠ failed", manual review queue.</div>
+      <span class="date">2026-06-14 · mới nhất</span>
+    </a>
+
+    <a class="card" href="docs/superpowers/specs/2026-06-10-sp3-kyc-gate-design.html">
+      <div class="ico">🔐</div>
+      <h3>SP3 — Cổng KYC trên Withdraw</h3>
+      <div class="d">Tích hợp wallet↔kyc↔Kafka: 9 quyết định (D1–D9), circuit breaker, cache invalidation qua event, IDOR/scoped query, transaction boundary, compensation.</div>
+      <span class="date">2026-06-10</span>
+    </a>
+
+    <a class="card" href="docs/superpowers/specs/2026-06-10-kyc-service-design.html">
+      <div class="ico">🪪</div>
+      <h3>KYC Service</h3>
+      <div class="d">State machine (NOT_STARTED→PENDING→APPROVED/REJECTED→REVOKED), audit ledger bất biến, webhook semantics, multi-boundary auth.</div>
+      <span class="date">2026-06-10</span>
+    </a>
+
+    <a class="card" href="docs/superpowers/specs/2026-06-10-api-gateway-design.html">
+      <div class="ico">🚪</div>
+      <h3>API Gateway</h3>
+      <div class="d">JWT RS256 (algorithm-pinning chống alg-confusion), HMAC ký service-to-service, routing + header passthrough, TraceId.</div>
+      <span class="date">2026-06-10</span>
+    </a>
+
+    <a class="card" href="docs/superpowers/specs/2026-06-09-multi-tenant-wallet-design.html">
+      <div class="ico">👛</div>
+      <h3>Multi-Tenant Wallet</h3>
+      <div class="d">Thiết kế nền: ledger bất biến + balance cache, idempotency (UNIQUE DB), optimistic locking, multi-tenancy schema-per-tenant.</div>
+      <span class="date">2026-06-09</span>
+    </a>
+
+  </div>
+
+  <footer>WalletDigital · tài liệu học tập Software Architecture · render bằng GitHub Pages · diagram bằng Mermaid (CDN)</footer>
+</div>
+</body>
+</html>

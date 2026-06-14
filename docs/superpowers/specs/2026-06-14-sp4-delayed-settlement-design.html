@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SP4 — Delayed Settlement (Withdraw bất đồng bộ + đối soát)</title>
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: true, theme: 'dark', sequence: { showSequenceNumbers: true } });
+</script>
+<style>
+  :root{--bg:#0f1117;--card:#171a21;--ink:#e6e6e6;--muted:#9aa4b2;--accent:#7c9cff;--accent2:#5be7c4;--line:#2a2f3a;--yellow:#ffd166;--red:#ff8a8a;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;line-height:1.6;font-size:16px;}
+  .wrap{max-width:1040px;margin:0 auto;padding:44px 24px 96px}
+  header.hero{background:linear-gradient(135deg,#1b2030,#11141c);border:1px solid var(--line);border-radius:16px;padding:30px;margin-bottom:28px;}
+  header.hero h1{margin:0 0 8px;font-size:28px}
+  .meta{color:var(--muted);font-size:14px;margin-top:10px}
+  h2{margin:40px 0 6px;font-size:21px;padding-bottom:8px;border-bottom:1px solid var(--line);color:#fff;}
+  h2 .num{color:var(--accent);margin-right:8px}
+  h3{margin:24px 0 4px;font-size:17px;color:#dbe2f0}
+  p{color:var(--ink)} p.lead{color:var(--muted);margin:6px 0 14px}
+  .diagram{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin:14px 0;overflow-x:auto}
+  .mermaid{display:flex;justify-content:center}
+  blockquote{margin:14px 0;padding:12px 16px;border-left:4px solid var(--yellow);background:rgba(255,209,102,.08);border-radius:0 10px 10px 0;color:#cfd6e4;}
+  blockquote strong{color:var(--yellow)}
+  blockquote.danger{border-left-color:var(--red);background:rgba(255,138,138,.08)} blockquote.danger strong{color:var(--red)}
+  code{background:rgba(255,255,255,.07);padding:2px 6px;border-radius:5px;font-size:13.5px;font-family:"SF Mono",Menlo,Consolas,monospace;color:var(--accent2)}
+  table{border-collapse:collapse;width:100%;margin:14px 0;font-size:14px}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:rgba(124,156,255,.12);color:#fff}
+  .toc{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 20px;columns:2;font-size:14px}
+  .toc a{color:var(--accent);text-decoration:none} .toc a:hover{text-decoration:underline}
+  .pill{display:inline-block;background:rgba(91,231,196,.13);color:var(--accent2);border:1px solid rgba(91,231,196,.3);border-radius:999px;padding:1px 9px;font-size:12px;margin-right:6px}
+  footer{margin-top:48px;color:var(--muted);font-size:13px;text-align:center}
+  a.back{color:var(--accent);text-decoration:none;font-size:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <p><a class="back" href="../../../index.html">← Về trang chủ tài liệu</a></p>
+
+  <header class="hero">
+    <h1>💸 SP4 — Delayed Settlement</h1>
+    <div class="meta">📅 2026-06-14 · Withdraw từ "tức thời" → <b>state machine bất đồng bộ</b> + escrow + reconciliation worker · Mermaid render trong browser</div>
+    <div class="meta">Tiền đề: SP1 (ledger) · SP2 (KYC state machine) · SP3 (cổng KYC + Kafka, e2e 7/7). Mọi quyết định E1–E10 do người học tự suy ra (Socratic).</div>
+  </header>
+
+  <div class="toc">
+    <a href="#s1">1. Vấn đề: lưỡng nan (a) vs (b)</a><br>
+    <a href="#s2">2. Phá giả định: escrow</a><br>
+    <a href="#s3">3. Mô hình số dư (available/held)</a><br>
+    <a href="#s4">4. State machine withdraw ⭐</a><br>
+    <a href="#s5">5. 3 thao tác — escrow nhốt rủi ro</a><br>
+    <a href="#s6">6. Reconciliation worker (self-healing)</a><br>
+    <a href="#s7">7. Idempotency 2 tầng</a><br>
+    <a href="#s8">8. Bẫy: "unknown ≠ failed"</a><br>
+    <a href="#s9">9. Bảng quyết định E1–E10</a>
+  </div>
+
+  <h2 id="s1"><span class="num">1.</span>Vấn đề: trừ tiền trước khi biết kết quả</h2>
+  <p class="lead">Tới giây trả <code>200 OK</code>, chưa đồng nào rời hệ. Tiền thật chỉ đi khi ví gọi ra ngân hàng — cú đó CHẬM và CÓ THỂ FAIL. Trừ tiền quá sớm tạo hai lỗi, cả hai đều không chấp nhận được.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart TB
+    Q["withdraw: trừ tiền lúc nào?"]
+    Q -->|"(a) trừ NGAY rồi gọi bank"| A["bank FAIL<br/>→ sổ ghi 'đã rút' nhưng tiền còn nguyên<br/>❌ SỔ KHÔNG KHỚP THỰC TẾ"]
+    Q -->|"(b) chờ bank xong mới trừ"| B["lúc PENDING tiền còn available<br/>→ user bấm rút LẦN NỮA<br/>❌ DOUBLE-SPEND"]
+    A --> I["💡 hai cái đều sai<br/>→ nghi ngờ GIẢ ĐỊNH CHUNG"]
+    B --> I
+    I --> S["Giả định chung: 'chỉ 1 tài khoản'<br/>→ PHÁ: thêm tài khoản thứ 2 = ESCROW"]
+  </pre></div>
+  <blockquote><strong>Insight nền:</strong> khi hai lựa chọn đều sai, đừng chọn "ít sai hơn" — <b>nghi ngờ giả định chung của cả hai</b>. Ở đây là <i>"chỉ có một tài khoản: ví user"</i>. Phá nó → tiền có chỗ thứ ba để "ở": <b>đang trên đường đi</b>.</blockquote>
+
+  <h2 id="s2"><span class="num">2.</span>Escrow — nhốt tiền "đang đi" (E2)</h2>
+  <p class="lead">Tiền không bị "trừ" — nó <b>di chuyển</b> giữa các tài khoản nội bộ. Mỗi chặng là một cặp bút toán double-entry. Tổng bất biến → không dòng nào bốc hơi.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+    RW["Ví thật<br/>(available)"] -->|"① rút 100k:<br/>move sang"| ESC["ESCROW<br/>(held — chờ rút)"]
+    ESC -->|"③a bank OK:<br/>escrow → ra ngoài"| OUT(("💸 ra<br/>thế giới thật"))
+    ESC -->|"③b bank FAIL:<br/>refund escrow → ví"| RW
+  </pre></div>
+  <blockquote><strong>Đọc:</strong> escrow (=holding/suspense account) là chỗ thứ 3 cho tiền. Đã rời <b>available</b> (chống double-spend) nhưng chưa rời <b>total</b> (chưa mất). Mọi hệ thanh toán thật đều có nó.</blockquote>
+
+  <h2 id="s3"><span class="num">3.</span>Mô hình số dư: hai con số (E3)</h2>
+  <div class="diagram"><pre class="mermaid">
+flowchart TB
+    T["total_balance<br/>(tổng còn sở hữu)"]
+    H["held<br/>(đang giữ cho lệnh PENDING/SENT)"]
+    AV["available = total − held<br/>◄ lệnh rút MỚI soi số này"]
+    T --> AV
+    H --> AV
+    AV -->|"amount ≤ available?"| OK["cho rút"]
+    AV -->|"không"| NO["422 (kể cả total vẫn đủ)"]
+  </pre></div>
+  <blockquote><strong>Bài học:</strong> lệnh rút mới soi <b>available</b>, KHÔNG soi total. Đây chính là điều giết chết double-spend của phương án (b): tiền đang trong escrow đã rời available nên không rút lại được.</blockquote>
+
+  <h2 id="s4"><span class="num">4.</span>⭐ State machine của withdraw (E1, E9, E10)</h2>
+  <p class="lead">Rút tiền KHÔNG phải sự kiện tức thời — nó là một <b>đoạn có vòng đời</b>. Tái dùng đúng pattern KYC state machine (SP2): make illegal states unrepresentable.</p>
+  <div class="diagram"><pre class="mermaid">
+stateDiagram-v2
+    [*] --> PENDING: ① tiền→escrow (atomic, +bankRef)
+    PENDING --> SENT: ② gọi bank
+    SENT --> SETTLED: bank OK (DỨT KHOÁT) → ③ escrow ra ngoài
+    SENT --> FAILED: bank TỪ CHỐI (DỨT KHOÁT) → ③ refund về ví
+    SENT --> SENT: timeout/UNKNOWN → worker query LẠI (cùng bankRef)
+    PENDING --> SETTLED: worker hỏi bank "đã settle rồi"
+    SENT --> NEEDS_MANUAL_REVIEW: hết N lần / quá T giờ vẫn UNKNOWN
+    NEEDS_MANUAL_REVIEW --> SETTLED: admin xác nhận ĐÃ đi
+    NEEDS_MANUAL_REVIEW --> FAILED: admin xác nhận CHƯA đi → refund
+    SETTLED --> [*]
+    FAILED --> [*]
+  </pre></div>
+  <blockquote><strong>Bài học:</strong> mọi mũi tên không vẽ là transition bất hợp lệ (chặn trong domain). Vd <code>SETTLED → FAILED</code> cấm — tiền ra ngoài rồi không tự refund được. <code>NEEDS_MANUAL_REVIEW</code> = in-doubt transaction → con người quyết.</blockquote>
+
+  <h2 id="s5"><span class="num">5.</span>3 thao tác — escrow nhốt rủi ro (E5)</h2>
+  <p class="lead">① ③ là thao tác NỘI BỘ (atomic, 1 DB transaction, money-safe). ② là thao tác RA NGOÀI (chậm, fail được). Suốt vùng rủi ro ②, tiền nằm an toàn trong escrow.</p>
+  <div class="diagram"><pre class="mermaid">
+sequenceDiagram
+    autonumber
+    actor U as User
+    participant GW as api-gateway
+    participant W as wallet-service
+    participant DB as Wallet DB (escrow+ledger)
+    participant B as Bank (mock, NGOÀI)
+    U->>GW: POST /withdraw + JWT + Idempotency-Key
+    GW->>W: forward + X-User-Id + HMAC
+    Note over W: [0] idem replay · [1] AuthZ ví · [2] cổng KYC (SP3)
+    rect rgb(30,50,40)
+      Note over W,DB: ① TRANSACTION nội bộ (atomic) — an toàn
+      W->>DB: available−=100; held+=100; tạo order PENDING + bankRef; ledger double-entry
+      DB-->>W: commit
+    end
+    W-->>U: 202 Accepted {orderId, PENDING}
+    rect rgb(60,30,30)
+      Note over W,B: ② GỌI BANK — vùng rủi ro (chậm/fail) · tiền ĐANG ở escrow
+      W->>B: transfer(bankRef, 100)   state→SENT
+      alt bank OK (dứt khoát)
+        B-->>W: SETTLED
+      else bank TỪ CHỐI (dứt khoát)
+        B-->>W: REJECTED
+      else timeout / UNKNOWN
+        B--xW: (không trả lời) → để SENT cho worker
+      end
+    end
+    rect rgb(30,50,40)
+      Note over W,DB: ③ TRANSACTION nội bộ (atomic)
+      W->>DB: settle: held−=100, ra-ngoài+=100, SETTLED<br/>HOẶC refund: held−=100, available+=100, FAILED
+    end
+  </pre></div>
+  <blockquote><strong>Bài học:</strong> escrow biến thao tác rủi-ro-không-nguyên-tử thành <b>[nội bộ an toàn] + [rủi ro nhưng tiền đã cất kỹ] + [nội bộ an toàn]</b>. Dù ② mất 10 phút, fail, hay crash giữa chừng — sổ cái vẫn khớp. Lưu ý: <code>202</code> (đã ghi nhận) chứ không phải <code>200</code> (đã xong).</blockquote>
+
+  <h2 id="s6"><span class="num">6.</span>Reconciliation worker — self-healing (E6, E8)</h2>
+  <p class="lead">Service crash sau ① nhưng trước ② → lệnh gọi chỉ sống trong RAM tiến trình đã chết → tiền kẹt escrow. Trạng thái bền vững trong DB + worker quét = tự lành. Worker KHÔNG tin trí nhớ — nó HỎI bank.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart TB
+    START["worker quét mỗi 30s<br/>các order chưa-terminal<br/>(SELECT ... FOR UPDATE SKIP LOCKED)"]
+    START --> P{state?}
+    P -->|PENDING| Q1["hỏi bank status(bankRef)"]
+    Q1 -->|"chưa thấy lệnh"| CALL["gọi bank transfer<br/>(CÙNG bankRef)"]
+    Q1 -->|"đã settle"| SET["③ settle → SETTLED"]
+    Q1 -->|"đã từ chối"| REF["③ refund → FAILED"]
+    P -->|SENT| Q2["hỏi bank status(bankRef)"]
+    Q2 -->|"đã settle"| SET
+    Q2 -->|"đã từ chối"| REF
+    Q2 -->|"UNKNOWN (chưa trả lời)"| CNT{"attempt > N<br/>hoặc quá T giờ?"}
+    CNT -->|chưa| SKIP["bỏ qua vòng này,<br/>thử lại vòng sau"]
+    CNT -->|rồi| MR["→ NEEDS_MANUAL_REVIEW"]
+  </pre></div>
+  <blockquote><strong>Bài học:</strong> bảng <code>withdrawal_order</code> trong DB <b>chính là hàng đợi việc-cần-làm bền vững</b> — không cần queue riêng. Webhook từ bank là <b>fast path</b> (tối ưu); worker poll là <b>slow path</b> (bảo đảm). Cả hai bổ trợ, đều phải idempotent.</blockquote>
+
+  <h2 id="s7"><span class="num">7.</span>Idempotency 2 tầng (E7)</h2>
+  <p class="lead">Một lệnh rút có HAI key ở HAI biên — mỗi biên retry vì lý do riêng nên cần key riêng. <code>bankRef</code> phải sinh ở bước ①, CÙNG record/transaction với tiền vào escrow.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+    U[User] -->|"Idempotency-Key<br/>(chống user/client bấm 2 lần)"| W[wallet]
+    W -->|"bankRef — sinh ở ①, cùng record<br/>(chống worker gọi lại sau crash → bank dedup)"| B[bank]
+  </pre></div>
+  <blockquote class="danger"><strong>Bẫy mất tiền:</strong> nếu worker sinh <b>bankRef MỚI</b> khi retry, bank thấy một lệnh lạ → <b>chuyển tiền LẦN NỮA</b> → user 100k bị rút 200k 💥. Phải dùng LẠI bankRef cũ. Vì vậy bankRef ghi <b>cùng transaction</b> với tiền-vào-escrow (atomic): hoặc cả hai cùng tồn tại, hoặc cả hai cùng không.</blockquote>
+
+  <h2 id="s8"><span class="num">8.</span>Bẫy chí mạng: "không trả lời" ≠ "thất bại" (E9, E10)</h2>
+  <p class="lead">Có hai loại "không thành công" với hậu quả NGƯỢC nhau. Gộp chung là mất tiền.</p>
+  <table>
+    <tr><th>Bank trả về</th><th>Nghĩa là</th><th>Được refund?</th></tr>
+    <tr><td><b>TỪ CHỐI</b> (số TK sai)</td><td>BIẾT CHẮC tiền chưa đi</td><td>✅ refund an toàn → FAILED</td></tr>
+    <tr><td><b>timeout / không trả lời</b> = UNKNOWN</td><td>KHÔNG biết tiền đã đi chưa</td><td>❌ TUYỆT ĐỐI không refund — chỉ query lại</td></tr>
+  </table>
+  <blockquote class="danger"><strong>Kịch bản chết người:</strong> bank ĐÃ chuyển 100k thật, nhưng gói xác nhận về bị mất → với ví là "timeout". Coi timeout = fail → refund → user nhận tiền ở bank <b>+</b> được hoàn trong ví = <b>mất trắng 100k</b>. Nguyên lý: chỉ hành động khi có câu trả lời <b>DỨT KHOÁT</b>; còn UNKNOWN thì việc duy nhất được làm là <b>hỏi lại</b>.</blockquote>
+  <div class="diagram"><pre class="mermaid">
+flowchart TB
+    UNK["UNKNOWN kéo dài<br/>(query N lần / T giờ vẫn chưa dứt khoát)"]
+    UNK --> MR["NEEDS_MANUAL_REVIEW<br/>(in-doubt transaction)"]
+    MR --> DLQ["Dead-Letter / Manual Reconciliation Queue"]
+    DLQ --> H["👤 con người: đăng nhập cổng bank,<br/>kiểm tra tay → quyết SETTLED hoặc FAILED"]
+  </pre></div>
+  <blockquote><strong>Bài học:</strong> thứ gì đoán sai làm mất tiền thật thì <b>máy không được tự quyết</b>. DLQ đảm bảo không giao dịch nào mất dấu — kẹt thì vào hàng đợi, có người xử.</blockquote>
+
+  <h2 id="s9"><span class="num">9.</span>Bảng quyết định E1–E10 (tóm tắt)</h2>
+  <table>
+    <tr><th>#</th><th>Quyết định</th><th>Lý do cốt lõi</th></tr>
+    <tr><td>E1</td><td>withdraw = state machine có vòng đời</td><td>rút tiền không tức thời; tái dùng pattern KYC</td></tr>
+    <tr><td>E2</td><td>thêm escrow + available/total</td><td>phá giả định 1-tài-khoản; chỗ thứ 3 cho tiền đang đi</td></tr>
+    <tr><td>E3</td><td>trừ available ở ① (escrow), không đợi SETTLED</td><td>chống double-spend của phương án (b)</td></tr>
+    <tr><td>E4</td><td>double-entry: tiền di chuyển, không sinh/mất</td><td>mất mát số bất khả về cấu trúc</td></tr>
+    <tr><td>E5</td><td>①③ nội bộ atomic, ② ngoài rủi ro; escrow nhốt rủi ro</td><td>tiền an toàn suốt vùng rủi ro ②</td></tr>
+    <tr><td>E6</td><td>trạng thái bền vững DB + reconciliation worker</td><td>self-healing sau crash</td></tr>
+    <tr><td>E7</td><td>bankRef sinh ở ①, cùng record, reuse mọi retry</td><td>chống trả kép; idempotency 2 tầng</td></tr>
+    <tr><td>E8</td><td>worker hỏi bank (status-query), không đoán</td><td>chỉ bank biết ② đã tới chưa</td></tr>
+    <tr><td>E9</td><td>"unknown ≠ failed"; chỉ act khi dứt khoát</td><td>timeout có thể là đã-đi → không refund</td></tr>
+    <tr><td>E10</td><td>hết retry → NEEDS_MANUAL_REVIEW → DLQ → người</td><td>máy không tự quyết chỗ mất tiền thật</td></tr>
+  </table>
+
+  <footer>SP4 Delayed Settlement · brainstorm Socratic 2026-06-14 · bản chi tiết: <code>2026-06-14-sp4-delayed-settlement-design.md</code> · mở bằng trình duyệt để xem Mermaid render</footer>
+</div>
+</body>
+</html>
