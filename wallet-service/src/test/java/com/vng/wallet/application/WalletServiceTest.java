@@ -100,8 +100,14 @@ class WalletServiceTest {
     static class FakeKycGate implements KycGate {
         KycCheckResult next = new KycCheckResult(Decision.ALLOWED, "APPROVED");
         int calls = 0;
+        Boolean calledInsideTransaction = null;
         @Override
-        public KycCheckResult check(String userId) { calls++; return next; }
+        public KycCheckResult check(String userId) {
+            calls++;
+            calledInsideTransaction = org.springframework.transaction.support.TransactionSynchronizationManager
+                    .isActualTransactionActive();
+            return next;
+        }
     }
 
     private final FakeKycGate gate = new FakeKycGate();
@@ -168,6 +174,20 @@ class WalletServiceTest {
         assertEquals(WalletTransaction.Type.WITHDRAW, tx.type());
         assertEquals(0, new BigDecimal("70.00").compareTo(tx.balanceAfter()));
         assertEquals(2, service.listTransactions(w.getId(), "user-1").size());
+    }
+
+    @Test
+    void withdraw_callsKycGateOutsideTransaction() {
+        // D4: gọi mạng (KYC) KHÔNG được nằm trong transaction DB (tránh giữ connection pool).
+        // NoopTransactionManager kích hoạt transaction synchronization, nên isActualTransactionActive()
+        // == true CHỈ KHI ở trong txTemplate.execute(). Gate phải được gọi TRƯỚC đó -> false.
+        Wallet w = service.createWallet("user-1", "Bob");
+        service.topup(w.getId(), "user-1", new BigDecimal("100.00"), "k-seed");
+
+        service.withdraw(w.getId(), "user-1", new BigDecimal("30.00"), "k-d4");
+
+        assertEquals(Boolean.FALSE, gate.calledInsideTransaction,
+                "cổng KYC phải được gọi NGOÀI transaction DB (D4)");
     }
 
     @Test

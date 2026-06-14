@@ -5,8 +5,11 @@ import com.vng.wallet.domain.WalletRepository;
 import com.vng.wallet.domain.WalletTransaction;
 import com.vng.wallet.infrastructure.kyc.KycStatusCache;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.test.context.EmbeddedKafka;
 
@@ -14,6 +17,7 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -22,6 +26,7 @@ import static org.junit.jupiter.api.Assertions.*;
         "spring.kafka.bootstrap-servers=${spring.embedded.kafka.brokers}"
 })
 @EmbeddedKafka(partitions = 3, topics = "kyc.revoked")
+@ExtendWith(OutputCaptureExtension.class)
 class KycRevokedConsumerTest {
 
     @Autowired KycStatusCache cache;
@@ -48,7 +53,7 @@ class KycRevokedConsumerTest {
     }
 
     @Test
-    void revokedEvent_triggersCompensationScan() {
+    void revokedEvent_triggersCompensationScan(CapturedOutput output) {
         Wallet w = walletRepository.save(Wallet.createNew("user-comp", "Eve"));
         Instant revokedAt = Instant.now().minusSeconds(30);
         walletRepository.saveTransaction(new WalletTransaction(null, w.getId(),
@@ -57,8 +62,29 @@ class KycRevokedConsumerTest {
 
         kafkaTemplate.send("kyc.revoked", "user-comp", event("user-comp", revokedAt));
 
-        // hành vi quan sát được: scan chạy không lỗi; nội dung log kiểm thủ công/log-capture.
+        // hành vi quan sát được: consumer log COMPENSATION-ALERT với đúng user + giao dịch nghi vấn
         await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
-                assertEquals(1, walletRepository.findWithdrawalsForUserSince("user-comp", revokedAt).size()));
+                assertThat(output.getOut())
+                        .contains("COMPENSATION-ALERT")
+                        .contains("userId=user-comp")
+                        .contains(":99"));   // id:amount của withdraw nghi vấn
+    }
+
+    @Test
+    void withdrawalBeforeRevokedAt_doesNotTriggerCompensationAlert(CapturedOutput output) {
+        Wallet w = walletRepository.save(Wallet.createNew("user-neg", "Mallory"));
+        Instant revokedAt = Instant.now();
+        walletRepository.saveTransaction(new WalletTransaction(null, w.getId(),
+                WalletTransaction.Type.WITHDRAW, new BigDecimal("77"), "k-old",
+                new BigDecimal("1"), revokedAt.minusSeconds(60)));   // withdraw TRƯỚC revokedAt
+
+        cache.markApproved("user-neg");
+        kafkaTemplate.send("kyc.revoked", "user-neg", event("user-neg", revokedAt));
+
+        // evict xảy ra TRƯỚC scan trong consumer -> chờ evict rồi đợi thêm để chắc scan đã chạy xong
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
+                assertFalse(cache.isApproved("user-neg")));
+        await().pollDelay(Duration.ofSeconds(1)).atMost(Duration.ofSeconds(5)).untilAsserted(() ->
+                assertThat(output.getOut()).doesNotContain("COMPENSATION-ALERT userId=user-neg"));
     }
 }
