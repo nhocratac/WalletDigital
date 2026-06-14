@@ -11,6 +11,9 @@ public interface WithdrawalOrderRepository {
 
     WithdrawalOrder save(WithdrawalOrder order);
 
+    /** Reload theo id (kèm @Version) — cửa nguyên tử applyTerminal (worker/webhook/admin, không scoped). */
+    Optional<WithdrawalOrder> findById(Long id);
+
     /** Replay tầng user (E7): Idempotency-Key -> order đã tạo. */
     Optional<WithdrawalOrder> findByIdempotencyKey(String key);
 

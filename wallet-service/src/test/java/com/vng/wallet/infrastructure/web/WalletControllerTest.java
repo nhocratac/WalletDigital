@@ -62,8 +62,9 @@ class WalletControllerTest {
                     return new Wallet(1L, wallet.getUserId(), wallet.getOwnerName(), wallet.getBalance(), wallet.getHeld(), 0L);
                 }
 
-                // Helper stub (không còn trên port): chỉ ví id=1 tồn tại (số dư 250.00); id khác -> rỗng -> 404.
-                private Optional<Wallet> findById(Long id) {
+                // Helper stub: chỉ ví id=1 tồn tại (số dư 250.00); id khác -> rỗng -> 404.
+                @Override
+                public Optional<Wallet> findById(Long id) {
                     if (id == 1L) {
                         return Optional.of(new Wallet(1L, "user-1", "Existing Owner", new BigDecimal("250.00"), BigDecimal.ZERO, 0L));
                     }
@@ -141,6 +142,11 @@ class WalletControllerTest {
                     store.put(id, saved);
                     byKey.put(saved.getIdempotencyKey(), saved);
                     return saved;
+                }
+
+                @Override
+                public Optional<com.vng.wallet.domain.WithdrawalOrder> findById(Long id) {
+                    return Optional.ofNullable(store.get(id));
                 }
 
                 @Override

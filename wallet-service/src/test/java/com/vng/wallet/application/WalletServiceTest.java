@@ -44,6 +44,11 @@ class WalletServiceTest {
         }
 
         @Override
+        public Optional<Wallet> findById(Long id) {
+            return Optional.ofNullable(store.get(id));
+        }
+
+        @Override
         public Optional<Wallet> findByIdAndUserId(Long id, String userId) {
             return Optional.ofNullable(store.get(id))
                     .filter(w -> userId != null && userId.equals(w.getUserId()));
@@ -106,6 +111,11 @@ class WalletServiceTest {
             store.put(id, saved);
             byKey.put(saved.getIdempotencyKey(), saved);
             return saved;
+        }
+
+        @Override
+        public Optional<WithdrawalOrder> findById(Long id) {
+            return Optional.ofNullable(store.get(id));
         }
 
         @Override

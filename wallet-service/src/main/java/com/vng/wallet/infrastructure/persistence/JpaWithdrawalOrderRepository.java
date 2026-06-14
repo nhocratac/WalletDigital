@@ -32,6 +32,11 @@ public class JpaWithdrawalOrderRepository implements WithdrawalOrderRepository {
     }
 
     @Override
+    public Optional<WithdrawalOrder> findById(Long id) {
+        return jpa.findById(id).map(mapper::toDomain);
+    }
+
+    @Override
     public Optional<WithdrawalOrder> findByIdempotencyKey(String key) {
         return jpa.findByIdempotencyKey(key).map(mapper::toDomain);
     }

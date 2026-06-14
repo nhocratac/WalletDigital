@@ -9,6 +9,8 @@ import java.util.Optional;
  */
 public interface WalletRepository {
     Wallet save(Wallet wallet);
+    /** Reload theo id (không scoped) — settle/refund bởi worker/webhook/admin (không có user context). */
+    Optional<Wallet> findById(Long id);
     Optional<Wallet> findByIdAndUserId(Long id, String userId);
     List<Wallet> findAllByUserId(String userId);
     List<WalletTransaction> findWithdrawalsForUserSince(String userId, java.time.Instant since);
