@@ -90,7 +90,7 @@ class WalletControllerTest {
                     List<Long> ids = findAllByUserId(userId).stream().map(Wallet::getId).toList();
                     return transactions.stream()
                             .filter(t -> ids.contains(t.walletId()))
-                            .filter(t -> t.type() == WalletTransaction.Type.WITHDRAW)
+                            .filter(t -> t.type() == WalletTransaction.Type.WITHDRAW_HOLD)
                             .filter(t -> !t.createdAt().isBefore(since))
                             .toList();
                 }
@@ -120,9 +120,50 @@ class WalletControllerTest {
                 public List<WalletTransaction> listTransactions(Long walletId) {
                     return transactions.stream().filter(t -> t.walletId().equals(walletId)).toList();
                 }
-            }, noopTxTemplate(),
+            }, inMemoryOrderRepo(), noopTxTemplate(),
             userId -> new com.vng.wallet.domain.KycGate.KycCheckResult(
                     com.vng.wallet.domain.KycGate.Decision.ALLOWED, "APPROVED")); // gate allow-all cho test web
+        }
+
+        /** Stub order repo — đủ cho test web (replay rỗng + lưu mới gán id). */
+        static com.vng.wallet.domain.WithdrawalOrderRepository inMemoryOrderRepo() {
+            return new com.vng.wallet.domain.WithdrawalOrderRepository() {
+                private final Map<Long, com.vng.wallet.domain.WithdrawalOrder> store = new HashMap<>();
+                private final Map<String, com.vng.wallet.domain.WithdrawalOrder> byKey = new HashMap<>();
+                private final AtomicLong seq = new AtomicLong(0);
+
+                @Override
+                public com.vng.wallet.domain.WithdrawalOrder save(com.vng.wallet.domain.WithdrawalOrder o) {
+                    Long id = o.getId() != null ? o.getId() : seq.incrementAndGet();
+                    var saved = new com.vng.wallet.domain.WithdrawalOrder(id, o.getUserId(), o.getWalletId(),
+                            o.getAmount(), o.getState(), o.getBankRef(), o.getIdempotencyKey(),
+                            o.getAttemptCount(), o.getFirstSentAt(), o.getVersion());
+                    store.put(id, saved);
+                    byKey.put(saved.getIdempotencyKey(), saved);
+                    return saved;
+                }
+
+                @Override
+                public Optional<com.vng.wallet.domain.WithdrawalOrder> findByIdempotencyKey(String key) {
+                    return Optional.ofNullable(byKey.get(key));
+                }
+
+                @Override
+                public Optional<com.vng.wallet.domain.WithdrawalOrder> findByBankRef(String bankRef) {
+                    return store.values().stream().filter(o -> bankRef.equals(o.getBankRef())).findFirst();
+                }
+
+                @Override
+                public Optional<com.vng.wallet.domain.WithdrawalOrder> findByIdAndUserId(Long id, String userId) {
+                    return Optional.ofNullable(store.get(id))
+                            .filter(o -> userId != null && userId.equals(o.getUserId()));
+                }
+
+                @Override
+                public List<com.vng.wallet.domain.WithdrawalOrder> findReconcilable(int limit) {
+                    return List.of();
+                }
+            };
         }
     }
 

@@ -60,24 +60,28 @@ class WalletLedgerIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.balanceAfter").value(100.00));
 
+        // E1: withdraw -> 202 + order PENDING; buoc ① chi HOLD (total chua doi).
         mockMvc.perform(post("/wallets/" + id + "/withdraw").header("X-User-Id", "user-1")
                         .header("Idempotency-Key", "w1")
                         .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":30.00}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.balanceAfter").value(70.00));
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.state").value("PENDING"))
+                .andExpect(jsonPath("$.amount").value(30.00));
 
+        // Ledger: TOPUP roi WITHDRAW_HOLD (balanceAfter = total = 100, chua roi he).
         mockMvc.perform(get("/wallets/" + id + "/transactions").header("X-User-Id", "user-1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(2))
                 .andExpect(jsonPath("$[0].type").value("TOPUP"))
                 .andExpect(jsonPath("$[0].amount").value(100.00))
                 .andExpect(jsonPath("$[0].createdAt").exists())
-                .andExpect(jsonPath("$[1].type").value("WITHDRAW"))
+                .andExpect(jsonPath("$[1].type").value("WITHDRAW_HOLD"))
                 .andExpect(jsonPath("$[1].amount").value(30.00))
-                .andExpect(jsonPath("$[1].balanceAfter").value(70.00));
+                .andExpect(jsonPath("$[1].balanceAfter").value(100.00));
 
+        // total van 100 (escrow); available = 70 nhung balance field = total.
         mockMvc.perform(get("/wallets/" + id).header("X-User-Id", "user-1"))
-                .andExpect(jsonPath("$.balance").value(70.00));
+                .andExpect(jsonPath("$.balance").value(100.00));
     }
 
     @Test
@@ -122,12 +126,12 @@ class WalletLedgerIntegrationTest {
 
         mockMvc.perform(post("/wallets/" + id + "/withdraw").header("X-User-Id", "user-1").header("Idempotency-Key", "x1")
                         .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":5.00}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.balanceAfter").value(5.00));
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.state").value("PENDING"));
 
         long retriedKeyRows = txJpa.findAll().stream()
                 .filter(t -> t.getIdempotencyKey().equals("x1")).count();
-        assertEquals(1, retriedKeyRows, "retry sau thất bại tạo đúng 1 bút toán cho key x1");
+        assertEquals(1, retriedKeyRows, "retry sau thất bại tạo đúng 1 bút toán WITHDRAW_HOLD cho key x1");
     }
 
     @Test
@@ -171,17 +175,21 @@ class WalletLedgerIntegrationTest {
         mockMvc.perform(post("/wallets/" + id + "/topup").header("X-User-Id", "user-1").header("Idempotency-Key", "wd-setup")
                 .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":100.00}")).andExpect(status().isOk());
 
-        mockMvc.perform(post("/wallets/" + id + "/withdraw").header("X-User-Id", "user-1").header("Idempotency-Key", "wd-dup")
-                .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":30.00}")).andExpect(status().isOk());
+        String orderId = mockMvc.perform(post("/wallets/" + id + "/withdraw").header("X-User-Id", "user-1").header("Idempotency-Key", "wd-dup")
+                .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":30.00}"))
+                .andExpect(status().isAccepted()).andReturn()
+                .getResponse().getContentAsString().replaceAll(".*\"orderId\":(\\d+).*", "$1");
+        // replay cung key -> 202 + CUNG orderId (khong hold lan 2)
         mockMvc.perform(post("/wallets/" + id + "/withdraw").header("X-User-Id", "user-1").header("Idempotency-Key", "wd-dup")
                 .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":30.00}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.balanceAfter").value(70.00)); // ket qua CU, khong tru lan 2
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.orderId").value(Long.parseLong(orderId)));
 
-        mockMvc.perform(get("/wallets/" + id).header("X-User-Id", "user-1")).andExpect(jsonPath("$.balance").value(70.00));
+        // total van 100 (escrow); held 30 chi mot lan.
+        mockMvc.perform(get("/wallets/" + id).header("X-User-Id", "user-1")).andExpect(jsonPath("$.balance").value(100.00));
         long count = txJpa.findAll().stream()
                 .filter(t -> t.getIdempotencyKey().equals("wd-dup")).count();
-        assertEquals(1, count, "DB chi co dung 1 but toan WITHDRAW cho key nay");
+        assertEquals(1, count, "DB chi co dung 1 but toan WITHDRAW_HOLD cho key nay");
     }
 
     @Test

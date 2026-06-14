@@ -78,18 +78,23 @@ class WalletConcurrencyIntegrationTest {
                     "loser chỉ được fail bằng concurrency exception, gặp: " + t);
         }
 
-        // (c) balance = 100 - 10 * successCount (không lost update, không double debit)
-        BigDecimal expected = new BigDecimal("100.00")
-                .subtract(new BigDecimal("10.00").multiply(BigDecimal.valueOf(successCount.get())));
-        assertEquals(0, walletService.getWallet(walletId, "user-1").getBalance().compareTo(expected),
-                "balance phải khớp đúng số lần withdraw thành công");
+        // (c) SP4 escrow: withdraw bước ① chỉ HOLD (balance/total không đổi); held = 10 * successCount,
+        //     available = 100 - held. Optimistic lock vẫn chống lost-update khi nhiều hold đua nhau.
+        Wallet after = walletService.getWallet(walletId, "user-1");
+        BigDecimal expectedHeld = new BigDecimal("10.00").multiply(BigDecimal.valueOf(successCount.get()));
+        assertEquals(0, after.getBalance().compareTo(new BigDecimal("100.00")),
+                "balance/total KHÔNG đổi ở bước ① (tiền chỉ chuyển ví->escrow)");
+        assertEquals(0, after.getHeld().compareTo(expectedHeld),
+                "held phải khớp đúng số lần hold thành công");
+        assertEquals(0, after.available().compareTo(new BigDecimal("100.00").subtract(expectedHeld)),
+                "available = total - held");
 
-        // (d) sổ cái: đúng successCount dòng WITHDRAW, loser rollback không để lại dòng mồ côi
-        long withdrawRows = txJpa.findByWalletIdOrderByCreatedAtAsc(walletId).stream()
-                .filter(t -> t.getType() == WalletTransaction.Type.WITHDRAW)
+        // (d) sổ cái: đúng successCount dòng WITHDRAW_HOLD, loser rollback không để lại dòng mồ côi
+        long holdRows = txJpa.findByWalletIdOrderByCreatedAtAsc(walletId).stream()
+                .filter(t -> t.getType() == WalletTransaction.Type.WITHDRAW_HOLD)
                 .count();
-        assertEquals(successCount.get(), withdrawRows,
-                "ledger WITHDRAW rows phải bằng số lần thành công (không có dòng từ transaction rollback)");
+        assertEquals(successCount.get(), holdRows,
+                "ledger WITHDRAW_HOLD rows phải bằng số lần thành công (không có dòng từ transaction rollback)");
     }
 
     @Test
@@ -144,14 +149,20 @@ class WalletConcurrencyIntegrationTest {
         long walletId = wallet.getId();
         walletService.topup(walletId, "user-1", new BigDecimal("40.00"), "reuse-key");
 
-        // khac amount
+        // topup: cung key, khac amount -> conflict (idempotency tang tx)
         assertThrows(com.vng.wallet.domain.IdempotencyKeyConflictException.class,
                 () -> walletService.topup(walletId, "user-1", new BigDecimal("41.00"), "reuse-key"));
-        // khac type
-        assertThrows(com.vng.wallet.domain.IdempotencyKeyConflictException.class,
-                () -> walletService.withdraw(walletId, "user-1", new BigDecimal("40.00"), "reuse-key"));
 
-        assertEquals(0, new BigDecimal("40.00").compareTo(walletService.getWallet(walletId, "user-1").getBalance()),
-                "balance KHONG doi khi key conflict");
+        // SP4: withdraw idempotency keyed theo bang withdrawal_order (tach namespace voi tx).
+        // Tao mot order voi key "wkey", roi reuse key voi amount khac -> conflict.
+        walletService.withdraw(walletId, "user-1", new BigDecimal("10.00"), "wkey");
+        assertThrows(com.vng.wallet.domain.IdempotencyKeyConflictException.class,
+                () -> walletService.withdraw(walletId, "user-1", new BigDecimal("20.00"), "wkey"));
+
+        Wallet after = walletService.getWallet(walletId, "user-1");
+        assertEquals(0, new BigDecimal("40.00").compareTo(after.getBalance()),
+                "balance KHONG doi khi key conflict (va buoc ① chi hold)");
+        assertEquals(0, new BigDecimal("10.00").compareTo(after.getHeld()),
+                "held chi phan anh order hop le da tao (10), khong them khi conflict");
     }
 }

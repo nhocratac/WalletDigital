@@ -13,6 +13,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -59,11 +60,17 @@ class WalletKycGateIntegrationTest {
     void approvedUser_canWithdraw() throws Exception {
         long id = createWalletWithBalance("it-ok");
         enqueueStatus("APPROVED");
+        // E1: withdraw -> 202 Accepted + order PENDING (tien vao escrow; chua settle).
         mockMvc.perform(post("/wallets/" + id + "/withdraw").header("X-User-Id", "it-ok")
                         .header("Idempotency-Key", "w-ok")
                         .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":10.00}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.balanceAfter").value(90.00));
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.state").value("PENDING"))
+                .andExpect(jsonPath("$.orderId").exists())
+                .andExpect(jsonPath("$.amount").value(10.00));
+        // total (balance) chua doi o buoc ① — tien chi chuyen vi->escrow.
+        mockMvc.perform(get("/wallets/" + id).header("X-User-Id", "it-ok"))
+                .andExpect(jsonPath("$.balance").value(100.00));
     }
 
     @Test
@@ -94,12 +101,12 @@ class WalletKycGateIntegrationTest {
         enqueueStatus("APPROVED");
         mockMvc.perform(post("/wallets/" + id + "/withdraw").header("X-User-Id", "it-cache")
                 .header("Idempotency-Key", "w-c1")
-                .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":5.00}")).andExpect(status().isOk());
+                .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":5.00}")).andExpect(status().isAccepted());
         int calls = kyc.getRequestCount();
 
         mockMvc.perform(post("/wallets/" + id + "/withdraw").header("X-User-Id", "it-cache")
                 .header("Idempotency-Key", "w-c2")
-                .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":5.00}")).andExpect(status().isOk());
+                .contentType(MediaType.APPLICATION_JSON).content("{\"amount\":5.00}")).andExpect(status().isAccepted());
         assertEquals(calls, kyc.getRequestCount(), "lần 2: cache hit, không gọi KYC");
     }
 }

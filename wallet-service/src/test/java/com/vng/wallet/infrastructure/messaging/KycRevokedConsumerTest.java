@@ -57,7 +57,7 @@ class KycRevokedConsumerTest {
         Wallet w = walletRepository.save(Wallet.createNew("user-comp", "Eve"));
         Instant revokedAt = Instant.now().minusSeconds(30);
         walletRepository.saveTransaction(new WalletTransaction(null, w.getId(),
-                WalletTransaction.Type.WITHDRAW, new BigDecimal("99"), "k-sus",
+                WalletTransaction.Type.WITHDRAW_HOLD, new BigDecimal("99"), "k-sus",
                 new BigDecimal("1"), Instant.now()));   // withdraw SAU revokedAt -> nghi vấn
 
         kafkaTemplate.send("kyc.revoked", "user-comp", event("user-comp", revokedAt));
@@ -75,7 +75,7 @@ class KycRevokedConsumerTest {
         Wallet w = walletRepository.save(Wallet.createNew("user-neg", "Mallory"));
         Instant revokedAt = Instant.now();
         walletRepository.saveTransaction(new WalletTransaction(null, w.getId(),
-                WalletTransaction.Type.WITHDRAW, new BigDecimal("77"), "k-old",
+                WalletTransaction.Type.WITHDRAW_HOLD, new BigDecimal("77"), "k-old",
                 new BigDecimal("1"), revokedAt.minusSeconds(60)));   // withdraw TRƯỚC revokedAt
 
         cache.markApproved("user-neg");

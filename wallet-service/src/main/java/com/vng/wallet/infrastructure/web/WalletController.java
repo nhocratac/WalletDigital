@@ -6,6 +6,7 @@ import com.vng.wallet.infrastructure.web.dto.CreateWalletRequest;
 import com.vng.wallet.infrastructure.web.dto.MoneyRequest;
 import com.vng.wallet.infrastructure.web.dto.TransactionResponse;
 import com.vng.wallet.infrastructure.web.dto.WalletResponse;
+import com.vng.wallet.infrastructure.web.dto.WithdrawalOrderResponse;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -50,13 +51,26 @@ public class WalletController {
                 walletService.topup(id, userId, request.amount(), requireIdempotencyKey(idempotencyKey)));
     }
 
+    /**
+     * E1: withdraw là vòng đời bất đồng bộ — trả 202 Accepted + orderId (PENDING),
+     * KHÔNG còn 200 "đã xong". Tiền đã vào escrow; worker/webhook lái tiếp tới terminal.
+     */
     @PostMapping("/{id}/withdraw")
-    public TransactionResponse withdraw(@PathVariable Long id,
-                                        @RequestHeader("X-User-Id") String userId,
-                                        @RequestHeader("Idempotency-Key") String idempotencyKey,
-                                        @Valid @RequestBody MoneyRequest request) {
-        return TransactionResponse.from(
+    public ResponseEntity<WithdrawalOrderResponse> withdraw(@PathVariable Long id,
+                                                            @RequestHeader("X-User-Id") String userId,
+                                                            @RequestHeader("Idempotency-Key") String idempotencyKey,
+                                                            @Valid @RequestBody MoneyRequest request) {
+        WithdrawalOrderResponse body = WithdrawalOrderResponse.from(
                 walletService.withdraw(id, userId, request.amount(), requireIdempotencyKey(idempotencyKey)));
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(body);
+    }
+
+    /** Poll trạng thái lệnh rút (D2 scoped) — client tra cứu vòng đời sau khi nhận 202. */
+    @GetMapping("/{id}/withdrawals/{orderId}")
+    public WithdrawalOrderResponse withdrawalStatus(@PathVariable Long id,
+                                                    @PathVariable Long orderId,
+                                                    @RequestHeader("X-User-Id") String userId) {
+        return WithdrawalOrderResponse.from(walletService.getWithdrawalOrder(id, orderId, userId));
     }
 
     private static String requireIdempotencyKey(String key) {

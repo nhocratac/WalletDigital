@@ -2,6 +2,7 @@ package com.vng.wallet.infrastructure.web;
 
 import com.vng.wallet.domain.IdempotencyKeyConflictException;
 import com.vng.wallet.domain.InsufficientFundsException;
+import com.vng.wallet.domain.InvalidWithdrawalTransitionException;
 import com.vng.wallet.domain.KycNotApprovedException;
 import com.vng.wallet.domain.KycUnavailableException;
 import com.vng.wallet.domain.WalletNotFoundException;
@@ -46,6 +47,12 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, String>> duplicateRequest(Exception ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(Map.of("error", "Duplicate request, please retry"));
+    }
+
+    @ExceptionHandler(InvalidWithdrawalTransitionException.class)
+    public ResponseEntity<Map<String, String>> invalidWithdrawalTransition(InvalidWithdrawalTransitionException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT) // 409: transition không hợp lệ trên state machine
+                .body(Map.of("error", ex.getMessage()));
     }
 
     @ExceptionHandler(IdempotencyKeyConflictException.class)

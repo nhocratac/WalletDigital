@@ -44,7 +44,8 @@ public class JpaWalletRepository implements WalletRepository {
     public List<WalletTransaction> findWithdrawalsForUserSince(String userId, java.time.Instant since) {
         List<Long> ids = jpa.findAllByUserId(userId).stream().map(WalletEntity::getId).toList();
         if (ids.isEmpty()) return List.of();
-        return txJpa.findByWalletIdInAndTypeAndCreatedAtGreaterThanEqual(ids, WalletTransaction.Type.WITHDRAW, since)
+        // SP4: bút toán mở đầu một lệnh rút giờ là WITHDRAW_HOLD (bước ①) — đây là dấu vết "đã rút sau revoke".
+        return txJpa.findByWalletIdInAndTypeAndCreatedAtGreaterThanEqual(ids, WalletTransaction.Type.WITHDRAW_HOLD, since)
                 .stream().map(mapper::toDomain).toList();
     }
 

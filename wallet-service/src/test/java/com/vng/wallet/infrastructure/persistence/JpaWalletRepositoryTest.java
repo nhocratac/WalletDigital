@@ -46,13 +46,13 @@ class JpaWalletRepositoryTest {
         Instant cutoff = Instant.now().minusSeconds(60);
         repository.saveTransaction(new WalletTransaction(null, w.getId(), WalletTransaction.Type.TOPUP,
                 new BigDecimal("100"), "k-t", new BigDecimal("100"), Instant.now()));
-        repository.saveTransaction(new WalletTransaction(null, w.getId(), WalletTransaction.Type.WITHDRAW,
+        repository.saveTransaction(new WalletTransaction(null, w.getId(), WalletTransaction.Type.WITHDRAW_HOLD,
                 new BigDecimal("30"), "k-w", new BigDecimal("70"), Instant.now()));
         em.flush(); em.clear();
 
         java.util.List<WalletTransaction> sus = repository.findWithdrawalsForUserSince("user-A", cutoff);
         assertEquals(1, sus.size());
-        assertEquals(WalletTransaction.Type.WITHDRAW, sus.get(0).type());
+        assertEquals(WalletTransaction.Type.WITHDRAW_HOLD, sus.get(0).type());
         assertTrue(repository.findWithdrawalsForUserSince("user-A", Instant.now().plusSeconds(60)).isEmpty());
     }
 

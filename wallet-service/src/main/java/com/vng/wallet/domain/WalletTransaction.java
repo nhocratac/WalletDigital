@@ -15,8 +15,8 @@ public record WalletTransaction(
 ) {
     /**
      * SP4 (E4): vòng đời rút = 3 sự kiện ledger thay cho WITHDRAW trần.
-     * WITHDRAW còn lại tạm thời để giữ compile/hành vi đường cũ — Task 3 thay thế trọn
-     * khi withdraw chuyển sang order-based (drift có chủ đích).
+     * Task 3 đã bỏ {@code WITHDRAW} — withdraw giờ order-based: ① ghi WITHDRAW_HOLD,
+     * ③ ghi WITHDRAW_SETTLED (tiền rời hệ) hoặc WITHDRAW_REFUNDED (hoàn về available).
      */
-    public enum Type { TOPUP, WITHDRAW, WITHDRAW_HOLD, WITHDRAW_SETTLED, WITHDRAW_REFUNDED }
+    public enum Type { TOPUP, WITHDRAW_HOLD, WITHDRAW_SETTLED, WITHDRAW_REFUNDED }
 }

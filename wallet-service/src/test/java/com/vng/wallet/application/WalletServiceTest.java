@@ -9,6 +9,9 @@ import com.vng.wallet.domain.Wallet;
 import com.vng.wallet.domain.WalletNotFoundException;
 import com.vng.wallet.domain.WalletRepository;
 import com.vng.wallet.domain.WalletTransaction;
+import com.vng.wallet.domain.WithdrawalOrder;
+import com.vng.wallet.domain.WithdrawalOrderRepository;
+import com.vng.wallet.domain.WithdrawalState;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.AbstractPlatformTransactionManager;
@@ -57,7 +60,7 @@ class WalletServiceTest {
             List<Long> ids = findAllByUserId(userId).stream().map(Wallet::getId).toList();
             return transactions.stream()
                     .filter(t -> ids.contains(t.walletId()))
-                    .filter(t -> t.type() == WalletTransaction.Type.WITHDRAW)
+                    .filter(t -> t.type() == WalletTransaction.Type.WITHDRAW_HOLD)
                     .filter(t -> !t.createdAt().isBefore(since))
                     .toList();
         }
@@ -88,6 +91,47 @@ class WalletServiceTest {
         private final AtomicLong txSeq = new AtomicLong(0);
     }
 
+    /** Fake order repo — đủ cho use case: replay theo idempotency_key + lưu mới. */
+    static class InMemoryWithdrawalOrderRepository implements WithdrawalOrderRepository {
+        private final Map<Long, WithdrawalOrder> store = new HashMap<>();
+        private final Map<String, WithdrawalOrder> byKey = new HashMap<>();
+        private final AtomicLong seq = new AtomicLong(0);
+
+        @Override
+        public WithdrawalOrder save(WithdrawalOrder order) {
+            Long id = order.getId() != null ? order.getId() : seq.incrementAndGet();
+            WithdrawalOrder saved = new WithdrawalOrder(id, order.getUserId(), order.getWalletId(),
+                    order.getAmount(), order.getState(), order.getBankRef(), order.getIdempotencyKey(),
+                    order.getAttemptCount(), order.getFirstSentAt(), order.getVersion());
+            store.put(id, saved);
+            byKey.put(saved.getIdempotencyKey(), saved);
+            return saved;
+        }
+
+        @Override
+        public Optional<WithdrawalOrder> findByIdempotencyKey(String key) {
+            return Optional.ofNullable(byKey.get(key));
+        }
+
+        @Override
+        public Optional<WithdrawalOrder> findByBankRef(String bankRef) {
+            return store.values().stream().filter(o -> bankRef.equals(o.getBankRef())).findFirst();
+        }
+
+        @Override
+        public Optional<WithdrawalOrder> findByIdAndUserId(Long id, String userId) {
+            return Optional.ofNullable(store.get(id))
+                    .filter(o -> userId != null && userId.equals(o.getUserId()));
+        }
+
+        @Override
+        public List<WithdrawalOrder> findReconcilable(int limit) {
+            return store.values().stream()
+                    .filter(o -> o.getState() == WithdrawalState.PENDING || o.getState() == WithdrawalState.SENT)
+                    .limit(limit).toList();
+        }
+    }
+
     /** No-op PlatformTransactionManager — giữ unit test Spring-context-free. */
     static class NoopTransactionManager extends AbstractPlatformTransactionManager {
         @Override protected Object doGetTransaction() { return new Object(); }
@@ -112,7 +156,8 @@ class WalletServiceTest {
 
     private final FakeKycGate gate = new FakeKycGate();
     private final WalletService service = new WalletService(
-            new InMemoryWalletRepository(), new TransactionTemplate(new NoopTransactionManager()), gate);
+            new InMemoryWalletRepository(), new InMemoryWithdrawalOrderRepository(),
+            new TransactionTemplate(new NoopTransactionManager()), gate);
 
     @Test
     void createWallet_savesWithZeroBalanceAndId() {
@@ -165,22 +210,35 @@ class WalletServiceTest {
     }
 
     @Test
-    void withdraw_appendsLedger() {
+    void withdraw_createsPendingOrder_reservesAndAppendsHoldLedger() {
         Wallet w = service.createWallet("user-1", "Bob");
         service.topup(w.getId(), "user-1", new BigDecimal("100.00"), "k1");
 
-        WalletTransaction tx = service.withdraw(w.getId(), "user-1", new BigDecimal("30.00"), "k2");
+        WithdrawalOrder order = service.withdraw(w.getId(), "user-1", new BigDecimal("30.00"), "k2");
 
-        assertEquals(WalletTransaction.Type.WITHDRAW, tx.type());
-        assertEquals(0, new BigDecimal("70.00").compareTo(tx.balanceAfter()));
-        assertEquals(2, service.listTransactions(w.getId(), "user-1").size());
+        // (a) order PENDING, mang đúng payload + bankRef sinh ở bước ①
+        assertEquals(WithdrawalState.PENDING, order.getState());
+        assertEquals(0, new BigDecimal("30.00").compareTo(order.getAmount()));
+        assertNotNull(order.getId());
+        assertNotNull(order.getBankRef(), "bankRef sinh ở bước ① (E7)");
+
+        // (b) escrow: available giảm, balance (total) CHƯA đổi
+        Wallet after = service.getWallet(w.getId(), "user-1");
+        assertEquals(0, new BigDecimal("100.00").compareTo(after.getBalance()), "balance/total chưa đổi ở bước ①");
+        assertEquals(0, new BigDecimal("30.00").compareTo(after.getHeld()));
+        assertEquals(0, new BigDecimal("70.00").compareTo(after.available()));
+
+        // (c) ledger: 1 TOPUP + 1 WITHDRAW_HOLD (balanceAfter = total chưa đổi)
+        List<WalletTransaction> txs = service.listTransactions(w.getId(), "user-1");
+        assertEquals(2, txs.size());
+        WalletTransaction hold = txs.stream()
+                .filter(t -> t.type() == WalletTransaction.Type.WITHDRAW_HOLD).findFirst().orElseThrow();
+        assertEquals(0, new BigDecimal("100.00").compareTo(hold.balanceAfter()));
     }
 
     @Test
     void withdraw_callsKycGateOutsideTransaction() {
-        // D4: gọi mạng (KYC) KHÔNG được nằm trong transaction DB (tránh giữ connection pool).
-        // NoopTransactionManager kích hoạt transaction synchronization, nên isActualTransactionActive()
-        // == true CHỈ KHI ở trong txTemplate.execute(). Gate phải được gọi TRƯỚC đó -> false.
+        // D4: gọi mạng (KYC) KHÔNG được nằm trong transaction DB.
         Wallet w = service.createWallet("user-1", "Bob");
         service.topup(w.getId(), "user-1", new BigDecimal("100.00"), "k-seed");
 
@@ -191,51 +249,36 @@ class WalletServiceTest {
     }
 
     @Test
-    void withdraw_sameIdempotencyKeyTwice_appliesOnce() {
+    void withdraw_sameIdempotencyKeyTwice_holdsOnce() {
         Wallet w = service.createWallet("user-1", "Bob");
         service.topup(w.getId(), "user-1", new BigDecimal("100.00"), "k-setup");
-        WalletTransaction first = service.withdraw(w.getId(), "user-1", new BigDecimal("30.00"), "w-dup");
+        WithdrawalOrder first = service.withdraw(w.getId(), "user-1", new BigDecimal("30.00"), "w-dup");
 
-        WalletTransaction second = service.withdraw(w.getId(), "user-1", new BigDecimal("30.00"), "w-dup");
+        WithdrawalOrder second = service.withdraw(w.getId(), "user-1", new BigDecimal("30.00"), "w-dup");
 
-        assertEquals(first.id(), second.id(), "retry tra lai but toan CU, khong tao moi");
-        assertEquals(0, new BigDecimal("70.00").compareTo(second.balanceAfter()), "tra ve balanceAfter cua lan dau");
-        assertEquals(0, new BigDecimal("70.00").compareTo(service.getWallet(w.getId(), "user-1").getBalance()), "balance chi tru MOT lan");
-        assertEquals(2, service.listTransactions(w.getId(), "user-1").size(), "1 topup + 1 withdraw");
+        assertEquals(first.getId(), second.getId(), "replay tra lai order CU, khong tao moi");
+        Wallet after = service.getWallet(w.getId(), "user-1");
+        assertEquals(0, new BigDecimal("30.00").compareTo(after.getHeld()), "held chi tang MOT lan");
+        assertEquals(0, new BigDecimal("70.00").compareTo(after.available()));
+        assertEquals(2, service.listTransactions(w.getId(), "user-1").size(), "1 topup + 1 WITHDRAW_HOLD");
     }
 
     @Test
-    void sameIdempotencyKey_differentPayload_throwsConflictAndBalanceUnchanged() {
+    void sameIdempotencyKey_differentPayload_throwsConflictAndUnchanged() {
         Wallet w = service.createWallet("user-1", "Alice");
-        Wallet other = service.createWallet("user-1", "Mallory");
         service.topup(w.getId(), "user-1", new BigDecimal("50.00"), "key-mix");
+        service.withdraw(w.getId(), "user-1", new BigDecimal("20.00"), "wkey-mix");
 
-        // khác amount
+        // cùng withdraw key, amount khác -> conflict
+        assertThrows(IdempotencyKeyConflictException.class,
+                () -> service.withdraw(w.getId(), "user-1", new BigDecimal("25.00"), "wkey-mix"));
+        // topup key khác type -> conflict ở tầng topup
         assertThrows(IdempotencyKeyConflictException.class,
                 () -> service.topup(w.getId(), "user-1", new BigDecimal("60.00"), "key-mix"));
-        // khác type
-        assertThrows(IdempotencyKeyConflictException.class,
-                () -> service.withdraw(w.getId(), "user-1", new BigDecimal("50.00"), "key-mix"));
-        // khác wallet
-        assertThrows(IdempotencyKeyConflictException.class,
-                () -> service.topup(other.getId(), "user-1", new BigDecimal("50.00"), "key-mix"));
 
-        assertEquals(0, new BigDecimal("50.00").compareTo(service.getWallet(w.getId(), "user-1").getBalance()),
-                "balance KHONG doi khi key bi conflict");
-        assertEquals(0, BigDecimal.ZERO.compareTo(service.getWallet(other.getId(), "user-1").getBalance()));
-        assertEquals(1, service.listTransactions(w.getId(), "user-1").size());
-    }
-
-    @Test
-    void sameIdempotencyKey_sameAmountDifferentScale_stillReplays() {
-        Wallet w = service.createWallet("user-1", "Alice");
-        WalletTransaction first = service.topup(w.getId(), "user-1", new BigDecimal("100"), "key-scale");
-
-        WalletTransaction second = service.topup(w.getId(), "user-1", new BigDecimal("100.00"), "key-scale");
-
-        assertEquals(first.id(), second.id(), "100 vs 100.00 la cung mot retry (compareTo semantics)");
-        assertEquals(0, new BigDecimal("100").compareTo(service.getWallet(w.getId(), "user-1").getBalance()));
-        assertEquals(1, service.listTransactions(w.getId(), "user-1").size());
+        Wallet after = service.getWallet(w.getId(), "user-1");
+        assertEquals(0, new BigDecimal("50.00").compareTo(after.getBalance()), "balance KHONG doi khi key conflict");
+        assertEquals(0, new BigDecimal("20.00").compareTo(after.getHeld()), "held KHONG doi khi key conflict");
     }
 
     @Test
@@ -252,14 +295,16 @@ class WalletServiceTest {
     }
 
     @Test
-    void withdraw_kycDenied_throws403TypeAndNoLedger() {
+    void withdraw_kycDenied_throws403Type_andNoOrderNoHold() {
         Wallet w = service.createWallet("user-1", "Alice");
         service.topup(w.getId(), "user-1", new BigDecimal("100"), "k1");
         gate.next = new KycGate.KycCheckResult(KycGate.Decision.DENIED, "PENDING");
 
         assertThrows(KycNotApprovedException.class,
                 () -> service.withdraw(w.getId(), "user-1", new BigDecimal("10"), "k2"));
-        assertEquals(1, service.listTransactions(w.getId(), "user-1").size(), "không có bút toán WITHDRAW");
+        Wallet after = service.getWallet(w.getId(), "user-1");
+        assertEquals(0, BigDecimal.ZERO.compareTo(after.getHeld()), "KYC denied -> KHONG hold");
+        assertEquals(1, service.listTransactions(w.getId(), "user-1").size(), "không có bút toán WITHDRAW_HOLD");
     }
 
     @Test
@@ -278,10 +323,10 @@ class WalletServiceTest {
         gate.calls = 0;
         gate.next = new KycGate.KycCheckResult(KycGate.Decision.DENIED, "REVOKED"); // dù giờ bị deny...
 
-        WalletTransaction replay = service.withdraw(w.getId(), "user-1", new BigDecimal("10"), "kw");
+        WithdrawalOrder replay = service.withdraw(w.getId(), "user-1", new BigDecimal("10"), "kw");
 
-        assertEquals(0, gate.calls, "replay KHÔNG gọi gate — trả kết quả CŨ (đúng ngữ nghĩa idempotent)");
-        assertEquals(0, new BigDecimal("10").compareTo(replay.amount()));
+        assertEquals(0, gate.calls, "replay KHÔNG gọi gate — trả order CŨ (đúng ngữ nghĩa idempotent)");
+        assertEquals(0, new BigDecimal("10").compareTo(replay.getAmount()));
     }
 
     @Test
@@ -293,11 +338,39 @@ class WalletServiceTest {
     }
 
     @Test
-    void withdraw_insufficient_throwsAndNoLedgerEntry() {
+    void withdraw_insufficientAvailable_throwsAndNoOrderNoHold() {
         Wallet w = service.createWallet("user-1", "Carol");
 
         assertThrows(InsufficientFundsException.class,
                 () -> service.withdraw(w.getId(), "user-1", new BigDecimal("1.00"), "k3"));
         assertEquals(0, service.listTransactions(w.getId(), "user-1").size(), "thất bại -> KHÔNG có bút toán");
+        assertEquals(0, BigDecimal.ZERO.compareTo(service.getWallet(w.getId(), "user-1").getHeld()));
+    }
+
+    @Test
+    void withdraw_secondExceedsAvailableDueToHeld_throws() {
+        // double-spend: rút 2 lần cùng available -> lần 2 thấy held -> InsufficientFunds (422)
+        Wallet w = service.createWallet("user-1", "Dave");
+        service.topup(w.getId(), "user-1", new BigDecimal("50.00"), "ds-fund");
+        service.withdraw(w.getId(), "user-1", new BigDecimal("40.00"), "ds-1"); // available 10 con lai
+
+        assertThrows(InsufficientFundsException.class,
+                () -> service.withdraw(w.getId(), "user-1", new BigDecimal("20.00"), "ds-2"));
+        Wallet after = service.getWallet(w.getId(), "user-1");
+        assertEquals(0, new BigDecimal("40.00").compareTo(after.getHeld()), "held giu nguyen, lan 2 khong hold them");
+    }
+
+    @Test
+    void getWithdrawalOrder_scopedToOwner() {
+        Wallet w = service.createWallet("user-1", "Owner");
+        service.topup(w.getId(), "user-1", new BigDecimal("100"), "gt");
+        WithdrawalOrder order = service.withdraw(w.getId(), "user-1", new BigDecimal("10"), "gw");
+
+        WithdrawalOrder found = service.getWithdrawalOrder(w.getId(), order.getId(), "user-1");
+        assertEquals(order.getId(), found.getId());
+
+        // chủ khác -> 404 (giấu tồn tại, D2)
+        assertThrows(WalletNotFoundException.class,
+                () -> service.getWithdrawalOrder(w.getId(), order.getId(), "user-EVIL"));
     }
 }
