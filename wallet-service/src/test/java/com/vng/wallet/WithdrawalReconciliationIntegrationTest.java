@@ -11,12 +11,14 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import java.time.Duration;
+import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -30,6 +32,22 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * Task 5 (E6, E8): reconciliation worker tự lái order PENDING -> terminal qua MockBankClient.
  * Worker bật ({@code wallet.reconcile.enabled=true}, interval ngắn); bank mock cấu hình kịch bản.
  * Awaitility chờ worker chạy nền tới khi order đạt terminal.
+ *
+ * <p><b>ISOLATION (review-fix Task 5):</b> đây là context DUY NHẤT bật scheduler
+ * ({@code @EnableScheduling} + {@code @Scheduled} của ReconciliationWorker). Spring CACHE
+ * context giữa các test-class, nên thread scheduler của nó KHÔNG bị huỷ giữa các class.
+ * ReconciliationService.findReconcilable() quét MỌI order PENDING/SENT trong DB (không
+ * scope theo wallet), nên nếu dùng chung DB H2 đặt-tên ({@code jdbc:h2:mem:walletdb} JVM-wide)
+ * thì worker nền sẽ "settle/refund" cả order của test-class KHÁC (vd WalletConcurrencyIntegrationTest)
+ * -> đổi tiền của ví không liên quan -> suite đỏ không xác định.
+ *
+ * <p>Hai lớp phòng vệ:
+ * <ul>
+ *   <li>{@code @DynamicPropertySource} cấp DB H2 RIÊNG/ngẫu nhiên + {@code ddl-auto=create-drop}
+ *       -> worker chỉ nhìn thấy order do CHÍNH test này tạo, không thấy order của test khác.</li>
+ *   <li>{@code @DirtiesContext(AFTER_CLASS)} huỷ context (và thread scheduler) sau class
+ *       -> scheduler không sống sót sang test sau để đụng DB chung.</li>
+ * </ul>
  */
 @SpringBootTest(properties = {
         "wallet.bank.mock=true",
@@ -37,6 +55,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "wallet.reconcile.interval-ms=200",
 })
 @AutoConfigureMockMvc
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class WithdrawalReconciliationIntegrationTest {
 
     static MockWebServer kyc;
@@ -50,10 +69,17 @@ class WithdrawalReconciliationIntegrationTest {
     @AfterAll
     static void stop() throws Exception { kyc.shutdown(); }
 
+    // DB ngẫu nhiên RIÊNG cho context có-scheduler này; DB_CLOSE_DELAY=-1 giữ DB sống suốt class.
+    private static final String ISOLATED_DB_URL =
+            "jdbc:h2:mem:recon-" + UUID.randomUUID() + ";DB_CLOSE_DELAY=-1";
+
     @DynamicPropertySource
     static void props(DynamicPropertyRegistry reg) {
         reg.add("wallet.kyc.base-url", () -> kyc.url("/").toString().replaceAll("/$", ""));
         reg.add("wallet.kyc.cache-ttl-seconds", () -> "60");
+        // Tách DB khỏi DB JVM-wide chung -> worker nền chỉ thấy order của test này.
+        reg.add("spring.datasource.url", () -> ISOLATED_DB_URL);
+        reg.add("spring.jpa.hibernate.ddl-auto", () -> "create-drop");
     }
 
     private void enqueueApproved() {
