@@ -43,6 +43,12 @@ public class ForwardingController {
         if (accept != null && !accept.isBlank()) {
             passthrough.put(HttpHeaders.ACCEPT, accept);
         }
+        // Idempotency-Key do client sinh để dedupe retry của chính nó — forward nguyên vẹn
+        // (không phải header bảo mật; downstream wallet topup/withdraw bắt buộc cần nó).
+        String idemKey = request.getHeader("Idempotency-Key");
+        if (idemKey != null && !idemKey.isBlank()) {
+            passthrough.put("Idempotency-Key", idemKey);
+        }
 
         DownstreamResponse resp = gatewayService.route(
                 request.getMethod(),

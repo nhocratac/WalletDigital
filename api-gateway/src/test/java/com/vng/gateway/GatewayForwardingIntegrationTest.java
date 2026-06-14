@@ -146,6 +146,7 @@ class GatewayForwardingIntegrationTest {
         HttpHeaders h = authHeaders(token);
         h.setContentType(MediaType.APPLICATION_JSON);
         h.setAccept(java.util.List.of(MediaType.APPLICATION_JSON));
+        h.set("Idempotency-Key", "client-key-1");
         ResponseEntity<String> resp = rest.exchange(
                 "http://localhost:" + gatewayPort + "/api/wallets/1/topup",
                 HttpMethod.POST, new HttpEntity<>(payload, h), String.class);
@@ -157,6 +158,8 @@ class GatewayForwardingIntegrationTest {
         // The bug: Content-Type was dropped -> downstream returned 415. It must be forwarded.
         assertEquals("application/json", forwarded.getHeader("Content-Type"));
         assertEquals("application/json", forwarded.getHeader("Accept"));
+        // Idempotency-Key bug (found by e2e): gateway dropped it -> wallet 400. Must forward.
+        assertEquals("client-key-1", forwarded.getHeader("Idempotency-Key"));
 
         // Signed security headers must still be present and untouched (canonical unchanged).
         assertEquals("acme", forwarded.getHeader("X-Tenant-Id"));
