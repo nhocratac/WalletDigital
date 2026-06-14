@@ -1,7 +1,11 @@
-# E2E thật — 3 service + Kafka (SP3 KYC gate)
+# E2E thật — 3 service + Kafka + mock bank (SP3 KYC gate + SP4 settlement)
 
-Chạy thật xuyên cả `api-gateway` + `wallet-service` + `kyc-service` + Kafka, kiểm chuỗi:
-**submit KYC → approve (webhook) → tạo ví → topup → withdraw OK → revoke → withdraw 403**.
+Chạy thật xuyên cả `api-gateway` + `wallet-service` + `kyc-service` + Kafka + mock bank, kiểm chuỗi:
+**submit KYC → approve (webhook) → tạo ví → topup → withdraw (202) → poll SETTLED → withdraw reject → poll FAILED (refund) → revoke → withdraw 403**.
+
+> SP4: `withdraw` giờ là vòng đời bất đồng bộ — trả **202 Accepted** + `orderId`; reconciliation
+> worker (slow path) lái order tới terminal qua MockBankClient. e2e poll `GET .../withdrawals/{orderId}`
+> tới SETTLED/FAILED (Awaitility kiểu bash: vòng lặp curl + sleep), rồi kiểm `balance` (total).
 
 > Loại test này bắt được bug mà unit/integration test (dùng mock) bỏ lọt — đã từng tóm
 > 2 bug gateway nuốt header (`Content-Type`, `Idempotency-Key`) và 1 gap `X-User-Id`.
@@ -20,7 +24,9 @@ cd kyc-service && KYC_KAFKA_ENABLED=true KYC_INTERNAL_HMAC_SECRET=e2e-internal \
   KYC_VERIFIER_HMAC_SECRET=e2e-verifier KAFKA_BOOTSTRAP=localhost:9092 mvn spring-boot:run
 
 cd wallet-service && WALLET_KAFKA_ENABLED=true WALLET_KYC_HMAC_SECRET=e2e-internal \
-  WALLET_KYC_BASE_URL=http://localhost:8082 KAFKA_BOOTSTRAP=localhost:9092 mvn spring-boot:run
+  WALLET_KYC_BASE_URL=http://localhost:8082 KAFKA_BOOTSTRAP=localhost:9092 \
+  WALLET_BANK_MOCK=true WALLET_RECONCILE_ENABLED=true WALLET_RECONCILE_INTERVAL_MS=1000 \
+  mvn spring-boot:run
 
 cd api-gateway && GATEWAY_HMAC_SECRET=e2e-internal \
   GATEWAY_JWT_PUBLIC_KEY="$(cat /tmp/e2e_sp3/pub.b64)" mvn spring-boot:run
@@ -40,8 +46,10 @@ docker compose down
 - webhook ký bằng `e2e-verifier` (secret RIÊNG — secret segmentation).
 
 ## Luồng gọi
-- Qua gateway (JWT): tạo ví, topup, withdraw.
+- Qua gateway (JWT): tạo ví, topup, withdraw, poll trạng thái order.
 - Trực tiếp tới kyc: submit (userId trong body), webhook approve (verifier ngoài),
   revoke (compliance + X-Roles) — đúng như các kênh đặc biệt ngoài đời.
+- Trực tiếp tới wallet `/mock-bank/default?result=...` (chỉ bật khi `wallet.bank.mock=true`): vòi
+  điều khiển MockBankClient để e2e dựng kịch bản SETTLED/REJECTED — KHÔNG phải API nghiệp vụ.
 
-Kết quả mong đợi: **7 PASS / 0 FAIL**.
+Kết quả mong đợi: **11 PASS / 0 FAIL** (3 KYC + 2 withdraw 202 + 2 poll terminal + 2 balance + 1 revoke + 1 withdraw 403).

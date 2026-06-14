@@ -46,12 +46,51 @@ R=$(curl -s -w '\n%{http_code}' -X POST "$GW/api/wallets/$WID/topup" \
 check "topup" "$(echo "$R" | tail -1)" "200"
 echo "  body: $(echo "$R" | head -1)"
 
-echo "=== [5] Withdraw 30 — KYC APPROVED -> phải 200 (gateway->wallet->kyc sync) ==="
+# poll_state <walletId> <orderId> <expectedState> -> in PASS/FAIL khi đạt (hoặc timeout 20s)
+poll_state() {
+  local wid="$1" oid="$2" want="$3" i st
+  for i in $(seq 1 40); do
+    st=$(curl -s "$GW/api/wallets/$wid/withdrawals/$oid" -H "Authorization: Bearer $JWT" \
+      | sed -E 's/.*"state":"([^"]+)".*/\1/')
+    [ "$st" = "$want" ] && break
+    sleep 0.5
+  done
+  check "poll order#$oid -> $want" "$st" "$want"
+}
+# balance_of <walletId> -> in ra balance (total)
+balance_of() {
+  curl -s "$GW/api/wallets/$1" -H "Authorization: Bearer $JWT" \
+    | sed -E 's/.*"balance":([0-9.]+).*/\1/'
+}
+
+echo "=== [5] Withdraw 30 — KYC APPROVED -> 202 Accepted + order PENDING (E1) ==="
 R=$(curl -s -w '\n%{http_code}' -X POST "$GW/api/wallets/$WID/withdraw" \
   -H "Authorization: Bearer $JWT" -H "Idempotency-Key: w1" \
   -H "Content-Type: application/json" --data-raw '{"amount":30}')
-check "withdraw#1 (approved)" "$(echo "$R" | tail -1)" "200"
-echo "  body: $(echo "$R" | head -1)"
+CODE=$(echo "$R" | tail -1); BODY=$(echo "$R" | head -1)
+check "withdraw#1 (202 accepted)" "$CODE" "202"
+OID1=$(echo "$BODY" | sed -E 's/.*"orderId":([0-9]+).*/\1/')
+echo "  orderId=$OID1  body=$BODY"
+
+echo "=== [5a] MockBank SETTLED -> worker đối soát lái order tới SETTLED ==="
+poll_state "$WID" "$OID1" "SETTLED"
+# settle: total 100 - 30 = 70 (tiền thật rời hệ).
+check "balance after settle" "$(balance_of "$WID")" "70.0"
+
+echo "=== [5b] MockBank REJECTED -> rút 20 -> worker refund -> FAILED, available phục hồi ==="
+# Đặt kết quả bank mặc định = REJECTED (vòi điều khiển mock, chỉ bật khi wallet.bank.mock=true).
+curl -s -o /dev/null -X POST "http://localhost:8080/mock-bank/default?result=REJECTED"
+R=$(curl -s -w '\n%{http_code}' -X POST "$GW/api/wallets/$WID/withdraw" \
+  -H "Authorization: Bearer $JWT" -H "Idempotency-Key: w-rej" \
+  -H "Content-Type: application/json" --data-raw '{"amount":20}')
+CODE=$(echo "$R" | tail -1); BODY=$(echo "$R" | head -1)
+check "withdraw#reject (202 accepted)" "$CODE" "202"
+OID2=$(echo "$BODY" | sed -E 's/.*"orderId":([0-9]+).*/\1/')
+poll_state "$WID" "$OID2" "FAILED"
+# refund: total không đổi (vẫn 70) — tiền chưa rời hệ, escrow trả về available.
+check "balance after refund" "$(balance_of "$WID")" "70.0"
+# Khôi phục SETTLED cho mọi withdraw sau (không ảnh hưởng các bước KYC kế).
+curl -s -o /dev/null -X POST "http://localhost:8080/mock-bank/default?result=SETTLED"
 
 echo "=== [6] Revoke KYC (direct -> kyc, HMAC + X-Roles compliance) -> publish kyc.revoked ==="
 B='{"reason":"fraud detected"}'
