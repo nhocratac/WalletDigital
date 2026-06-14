@@ -18,6 +18,12 @@ import java.time.Duration;
 @Configuration
 public class BankConfig {
 
+    /** HmacSigner dùng chung — RestBankClient (ký gọi đi) + WithdrawalWebhookController (verify webhook đến). */
+    @Bean
+    public HmacSigner hmacSigner() {
+        return new HmacSigner();
+    }
+
     /** RestBankClient là bean mặc định; tắt khi bật mock (tránh hai bean BankClient). */
     @Bean
     @ConditionalOnProperty(name = "wallet.bank.mock", havingValue = "false", matchIfMissing = true)

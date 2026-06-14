@@ -9,6 +9,7 @@ import com.vng.wallet.domain.WithdrawalOrderRepository;
 import com.vng.wallet.domain.WithdrawalState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -150,6 +151,12 @@ public class WithdrawalSettlementService {
         } catch (OptimisticLockingFailureException e) {
             // Kết quả MONG ĐỢI của race (worker × webhook × admin): người thua bỏ qua an toàn.
             log.info("applyTerminal lost optimistic race for order id={} (already terminalized by another actor)",
+                    order.getId());
+        } catch (DataIntegrityViolationException e) {
+            // Race biến thể: người thắng đã ghi bút toán terminal mang cùng bankRef (UNIQUE trên
+            // wallet_transaction.idempotency_key = bankRef) -> người thua đụng UNIQUE -> rollback.
+            // Cũng là exactly-once: chỉ một lần đổi tiền + một bút toán. An toàn bỏ qua.
+            log.info("applyTerminal lost ledger-unique race for order id={} (terminal ledger already written by another actor)",
                     order.getId());
         }
     }
