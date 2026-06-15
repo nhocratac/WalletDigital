@@ -1,6 +1,7 @@
 package com.vng.wallet.infrastructure.web;
 
 import com.vng.wallet.application.WalletService;
+import com.vng.wallet.support.DefaultTenantHeaderConfig;
 import com.vng.wallet.domain.Wallet;
 import com.vng.wallet.domain.WalletRepository;
 import com.vng.wallet.domain.WalletTransaction;
@@ -30,7 +31,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @WebMvcTest(WalletController.class)
-@Import({GlobalExceptionHandler.class, WalletControllerTest.TestStubConfig.class})
+@Import({GlobalExceptionHandler.class, WalletControllerTest.TestStubConfig.class, DefaultTenantHeaderConfig.class})
 class WalletControllerTest {
 
     @Autowired

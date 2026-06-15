@@ -1,6 +1,7 @@
 package com.vng.wallet.infrastructure.web;
 
 import com.vng.wallet.application.WithdrawalSettlementService;
+import com.vng.wallet.support.DefaultTenantHeaderConfig;
 import com.vng.wallet.domain.BankClient;
 import com.vng.wallet.domain.Wallet;
 import com.vng.wallet.domain.WalletRepository;
@@ -40,7 +41,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * AuthZ: header X-Roles phải chứa ops/compliance, ngược lại 403.
  */
 @WebMvcTest(AdminReviewController.class)
-@Import({GlobalExceptionHandler.class, AdminReviewControllerTest.TestStubConfig.class})
+@Import({GlobalExceptionHandler.class, AdminReviewControllerTest.TestStubConfig.class, DefaultTenantHeaderConfig.class})
 class AdminReviewControllerTest {
 
     @Autowired

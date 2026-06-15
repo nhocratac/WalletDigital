@@ -1,6 +1,7 @@
 package com.vng.wallet.infrastructure.web;
 
 import com.vng.wallet.application.WithdrawalSettlementService;
+import com.vng.wallet.support.DefaultTenantHeaderConfig;
 import com.vng.wallet.domain.BankClient;
 import com.vng.wallet.domain.Wallet;
 import com.vng.wallet.domain.WalletRepository;
@@ -44,7 +45,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * sai chữ ký -> 401.
  */
 @WebMvcTest(WithdrawalWebhookController.class)
-@Import({GlobalExceptionHandler.class, WithdrawalWebhookControllerTest.TestStubConfig.class})
+@Import({GlobalExceptionHandler.class, WithdrawalWebhookControllerTest.TestStubConfig.class, DefaultTenantHeaderConfig.class})
 @TestPropertySource(properties = "wallet.bank.webhook-secret=" + WithdrawalWebhookControllerTest.SECRET)
 class WithdrawalWebhookControllerTest {
 

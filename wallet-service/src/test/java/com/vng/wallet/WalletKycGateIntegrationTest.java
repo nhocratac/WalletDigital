@@ -1,11 +1,13 @@
 package com.vng.wallet;
 
+import com.vng.wallet.support.DefaultTenantHeaderConfig;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -20,6 +22,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /** Ma trận tình huống cổng KYC (design §9) — MockWebServer đóng vai kyc-service. */
 @SpringBootTest
 @AutoConfigureMockMvc
+@Import(DefaultTenantHeaderConfig.class)
 class WalletKycGateIntegrationTest {
 
     static MockWebServer kyc;
