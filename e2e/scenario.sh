@@ -6,8 +6,12 @@ KYC=http://localhost:8082
 JWT=$(cat "$D/user.jwt")
 sign() { bash "$D/sign.sh" "$@"; }
 pass=0; fail=0
-check() { # check <label> <actual> <expected>
+check() { # check <label> <actual> <expected> — so khớp chuỗi
   if [ "$2" = "$3" ]; then echo "  ✅ $1 -> $2"; pass=$((pass+1));
+  else echo "  ❌ $1 -> $2 (mong đợi $3)"; fail=$((fail+1)); fi
+}
+check_num() { # check_num <label> <actual> <expected> — so khớp SỐ (70.00 == 70.0)
+  if awk -v a="$2" -v b="$3" 'BEGIN{exit !(a+0==b+0)}'; then echo "  ✅ $1 -> $2"; pass=$((pass+1));
   else echo "  ❌ $1 -> $2 (mong đợi $3)"; fail=$((fail+1)); fi
 }
 
@@ -75,7 +79,7 @@ echo "  orderId=$OID1  body=$BODY"
 echo "=== [5a] MockBank SETTLED -> worker đối soát lái order tới SETTLED ==="
 poll_state "$WID" "$OID1" "SETTLED"
 # settle: total 100 - 30 = 70 (tiền thật rời hệ).
-check "balance after settle" "$(balance_of "$WID")" "70.0"
+check_num "balance after settle" "$(balance_of "$WID")" "70.0"
 
 echo "=== [5b] MockBank REJECTED -> rút 20 -> worker refund -> FAILED, available phục hồi ==="
 # Đặt kết quả bank mặc định = REJECTED (vòi điều khiển mock, chỉ bật khi wallet.bank.mock=true).
@@ -88,7 +92,7 @@ check "withdraw#reject (202 accepted)" "$CODE" "202"
 OID2=$(echo "$BODY" | sed -E 's/.*"orderId":([0-9]+).*/\1/')
 poll_state "$WID" "$OID2" "FAILED"
 # refund: total không đổi (vẫn 70) — tiền chưa rời hệ, escrow trả về available.
-check "balance after refund" "$(balance_of "$WID")" "70.0"
+check_num "balance after refund" "$(balance_of "$WID")" "70.0"
 # Khôi phục SETTLED cho mọi withdraw sau (không ảnh hưởng các bước KYC kế).
 curl -s -o /dev/null -X POST "http://localhost:8080/mock-bank/default?result=SETTLED"
 

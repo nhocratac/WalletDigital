@@ -52,4 +52,6 @@ docker compose down
 - Trực tiếp tới wallet `/mock-bank/default?result=...` (chỉ bật khi `wallet.bank.mock=true`): vòi
   điều khiển MockBankClient để e2e dựng kịch bản SETTLED/REJECTED — KHÔNG phải API nghiệp vụ.
 
-Kết quả mong đợi: **11 PASS / 0 FAIL** (3 KYC + 2 withdraw 202 + 2 poll terminal + 2 balance + 1 revoke + 1 withdraw 403).
+Kết quả mong đợi: **12 PASS / 0 FAIL** (submit + webhook + create + topup + 2 withdraw-202 + 2 poll-terminal + 2 balance + revoke + withdraw-403).
+
+> ⚠️ Scenario KHÔNG re-run được trên cùng instance wallet: `Idempotency-Key` (`t1`/`w1`/...) là toàn cục theo đời sống wallet → chạy lần 2 đụng key cũ → 422 (đúng hành vi same-key-different-payload, Stage 2). Muốn chạy lại: **restart wallet** (H2 in-memory reset). Balance check dùng so-sánh-SỐ (`check_num`) vì API trả `70.00` còn kỳ vọng viết `70.0`.
