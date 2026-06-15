@@ -40,7 +40,10 @@ class FlywaySchemaIntegrationTest {
     @DynamicPropertySource
     static void datasource(DynamicPropertyRegistry registry) {
         registry.add("spring.datasource.url", MYSQL::getJdbcUrl);
-        registry.add("spring.datasource.username", MYSQL::getUsername);
+        // SP5 Task 3: the master persistence unit now creates the `master` schema at boot, which
+        // needs CREATE SCHEMA privilege — the default `test` user is scoped to `test` only. Use root
+        // (realistic: schema provisioning in Task 5 also requires it).
+        registry.add("spring.datasource.username", () -> "root");
         registry.add("spring.datasource.password", MYSQL::getPassword);
         registry.add("spring.datasource.driver-class-name", () -> "com.mysql.cj.jdbc.Driver");
         // single-schema baseline: migrate the tenant location into the container's default schema

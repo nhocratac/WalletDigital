@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -17,6 +18,10 @@ import static org.junit.jupiter.api.Assertions.*;
 
 @DataJpaTest
 @Import({JpaWalletRepository.class, WalletMapperImpl.class})   // nạp adapter + mapper MapStruct sinh ra vào test context
+// SP5 Task 3: scope this slice to the tenant persistence package only. Without this, the slice's
+// repo auto-scan picks up the master TenantRegistryRepository, whose custom impl needs the `master`
+// persistence unit (not present in a @DataJpaTest single-EMF slice).
+@EnableJpaRepositories(basePackages = "com.vng.wallet.infrastructure.persistence")
 class JpaWalletRepositoryTest {
 
     @Autowired

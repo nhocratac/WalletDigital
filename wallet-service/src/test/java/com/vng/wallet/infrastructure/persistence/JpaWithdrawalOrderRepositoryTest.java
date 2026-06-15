@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -17,6 +18,9 @@ import static org.junit.jupiter.api.Assertions.*;
 
 @DataJpaTest
 @Import({JpaWithdrawalOrderRepository.class, WithdrawalOrderMapperImpl.class})
+// SP5 Task 3: scope to tenant persistence package; keep the master repo out of this slice (see
+// JpaWalletRepositoryTest for rationale).
+@EnableJpaRepositories(basePackages = "com.vng.wallet.infrastructure.persistence")
 class JpaWithdrawalOrderRepositoryTest {
 
     @Autowired
