@@ -1,6 +1,8 @@
 package com.vng.wallet.infrastructure.web;
 
 import com.vng.wallet.infrastructure.web.dto.CreateTenantRequest;
+import com.vng.wallet.tenancy.FleetMigrationResult;
+import com.vng.wallet.tenancy.FleetMigrationService;
 import com.vng.wallet.tenancy.TenantProvisioningService;
 import com.vng.wallet.tenancy.TenantSchemas;
 import jakarta.validation.Valid;
@@ -33,9 +35,12 @@ public class AdminTenantController {
     private static final Set<String> AUTHORIZED_ROLES = Set.of("ops");
 
     private final TenantProvisioningService provisioningService;
+    private final FleetMigrationService fleetMigrationService;
 
-    public AdminTenantController(TenantProvisioningService provisioningService) {
+    public AdminTenantController(TenantProvisioningService provisioningService,
+                                 FleetMigrationService fleetMigrationService) {
         this.provisioningService = provisioningService;
+        this.fleetMigrationService = fleetMigrationService;
     }
 
     @PostMapping
@@ -50,6 +55,25 @@ public class AdminTenantController {
                 "tenantId", request.tenantId(),
                 "schema", TenantSchemas.schemaFor(request.tenantId().trim()),
                 "status", "ACTIVE"));
+    }
+
+    /**
+     * SP5 Task 6 (T8): trigger a fleet migration — apply the latest tenant migration set to every
+     * live tenant schema. Per-tenant failures are isolated (flagged MIGRATION_FAILED, job continues),
+     * so this always returns 200 with the success/failure tally; ops act on the failed list.
+     */
+    @PostMapping("/migrate")
+    public ResponseEntity<?> migrateFleet(
+            @RequestHeader(value = "X-Roles", required = false) String roles) {
+        if (!hasAuthorizedRole(roles)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(Map.of("error", "requires role ops"));
+        }
+        FleetMigrationResult result = fleetMigrationService.migrateAll();
+        return ResponseEntity.ok(Map.of(
+                "succeeded", result.succeeded(),
+                "failed", result.failed(),
+                "failedTenants", result.failedTenants()));
     }
 
     private static boolean hasAuthorizedRole(String roles) {

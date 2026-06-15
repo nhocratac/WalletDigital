@@ -1,6 +1,8 @@
 package com.vng.wallet.infrastructure.web;
 
 import com.vng.wallet.support.DefaultTenantHeaderConfig;
+import com.vng.wallet.tenancy.FleetMigrationResult;
+import com.vng.wallet.tenancy.FleetMigrationService;
 import com.vng.wallet.tenancy.TenantAlreadyExistsException;
 import com.vng.wallet.tenancy.TenantProvisioningService;
 import org.junit.jupiter.api.Test;
@@ -38,6 +40,17 @@ class AdminTenantControllerTest {
     @Autowired
     private FakeProvisioningService provisioning;
 
+    @Autowired
+    private FakeFleetMigrationService fleet;
+
+    @org.junit.jupiter.api.BeforeEach
+    void resetFakes() {
+        provisioning.provisioned.clear();
+        provisioning.toThrow = null;
+        fleet.migrateAllCalls = 0;
+        fleet.result = new FleetMigrationResult(0, 0, List.of());
+    }
+
     /** Controllable fake — records provisioned ids, optionally throws to simulate a duplicate. */
     static class FakeProvisioningService extends TenantProvisioningService {
         final List<String> provisioned = new ArrayList<>();
@@ -56,11 +69,32 @@ class AdminTenantControllerTest {
         }
     }
 
+    /** Controllable fake — records whether the fleet migration was triggered, returns a fixed tally. */
+    static class FakeFleetMigrationService extends FleetMigrationService {
+        int migrateAllCalls;
+        FleetMigrationResult result = new FleetMigrationResult(0, 0, List.of());
+
+        FakeFleetMigrationService() {
+            super(null, null, "classpath:db/migration/tenant");
+        }
+
+        @Override
+        public FleetMigrationResult migrateAll() {
+            migrateAllCalls++;
+            return result;
+        }
+    }
+
     @TestConfiguration
     static class StubConfig {
         @Bean
         FakeProvisioningService provisioningService() {
             return new FakeProvisioningService();
+        }
+
+        @Bean
+        FakeFleetMigrationService fleetMigrationService() {
+            return new FakeFleetMigrationService();
         }
     }
 
@@ -105,5 +139,24 @@ class AdminTenantControllerTest {
                 .andExpect(status().isBadRequest());
 
         assertTrue(provisioning.provisioned.isEmpty());
+    }
+
+    @Test
+    void migrateFleet_returns200_andTriggersMigration() throws Exception {
+        fleet.result = new FleetMigrationResult(3, 0, List.of());
+
+        mockMvc.perform(post("/admin/tenants/migrate")
+                        .header("X-Roles", "ops"))
+                .andExpect(status().isOk());
+
+        assertEquals(1, fleet.migrateAllCalls);
+    }
+
+    @Test
+    void migrateFleet_missingRole_returns403_andDoesNotMigrate() throws Exception {
+        mockMvc.perform(post("/admin/tenants/migrate"))
+                .andExpect(status().isForbidden());
+
+        assertEquals(0, fleet.migrateAllCalls);
     }
 }
