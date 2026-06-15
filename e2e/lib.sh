@@ -32,3 +32,25 @@ gen_keys_and_token() {
   sig=$(printf '%s' "$h.$p" | openssl dgst -sha256 -sign "$D/priv.pem" -binary | b64url)
   printf '%s.%s.%s' "$h" "$p" "$sig" > "$D/user.jwt"
 }
+
+# gen_tenant_token <userId> <tenantId> <outFile>
+# Sinh thêm một JWT (sub=userId, tenantId=tenantId) ký bằng KEY có sẵn ($D/priv.pem từ
+# gen_keys_and_token). Dùng cho e2e đa-tenant (SP5): mỗi tenant một JWT, cùng một gateway/pub key.
+gen_tenant_token() {
+  local userId="$1" tenantId="$2" out="$3"
+  local header payload now exp h p sig
+  header='{"alg":"RS256","typ":"JWT"}'
+  now=$(date +%s); exp=$((now + 3600))
+  payload="{\"sub\":\"$userId\",\"tenantId\":\"$tenantId\",\"iat\":$now,\"exp\":$exp}"
+  h=$(printf '%s' "$header" | b64url)
+  p=$(printf '%s' "$payload" | b64url)
+  sig=$(printf '%s' "$h.$p" | openssl dgst -sha256 -sign "$D/priv.pem" -binary | b64url)
+  printf '%s.%s.%s' "$h" "$p" "$sig" > "$out"
+}
+
+# gen_two_tenant_tokens — SP5 Task 8: hai JWT cho hai tenant cách ly (acme, globex).
+# Yêu cầu key đã sinh (gọi gen_keys_and_token trước). Ghi $D/acme.jwt và $D/globex.jwt.
+gen_two_tenant_tokens() {
+  gen_tenant_token "user-acme"   "acme"   "$D/acme.jwt"
+  gen_tenant_token "user-globex" "globex" "$D/globex.jwt"
+}

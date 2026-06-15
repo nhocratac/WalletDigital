@@ -54,4 +54,44 @@ docker compose down
 
 Kết quả mong đợi: **12 PASS / 0 FAIL** (submit + webhook + create + topup + 2 withdraw-202 + 2 poll-terminal + 2 balance + revoke + withdraw-403).
 
+## SP5 — E2E đa-tenant cách ly (`scenario-tenant.sh`)
+
+Chứng minh **schema-per-tenant**: hai tenant (`acme`, `globex`) cách ly hoàn toàn qua gateway.
+Onboard cả hai (`POST /admin/tenants` thẳng vào wallet, role `ops`) → tạo ví + topup ở `acme` bằng
+JWT acme → dùng JWT globex truy cập ví của acme → **404** (globex không thấy schema acme) → globex
+tạo ví độc lập, balance riêng. Lộ-chéo tenant là bất khả thi vì routing đổi schema lúc mở connection.
+
+> **Yêu cầu MySQL thật** (schema-per-tenant + Flyway + master registry — H2 in-mem không hợp). Chạy
+> wallet với `WALLET_DB_URL`/`WALLET_DB_USERNAME`/`WALLET_DB_PASSWORD` trỏ MySQL (user có quyền
+> `CREATE SCHEMA` để onboarding dựng `tenant_acme`/`tenant_globex`). Onboarding tự `CREATE SCHEMA` +
+> `flyway.migrate(db/migration/tenant)` → ACTIVE.
+
+```bash
+# 1. Kafka + MySQL (docker compose) — đợi MySQL sẵn sàng
+docker compose up -d
+
+# 2. Sinh khoá RSA + JWT user mặc định, RỒI hai JWT tenant (acme, globex)
+source e2e/lib.sh && gen_keys_and_token && gen_two_tenant_tokens
+
+# 3. Bật 3 service như trên, NHƯNG wallet trỏ MySQL (user CREATE SCHEMA), ví dụ:
+cd wallet-service && WALLET_DB_URL="jdbc:mysql://localhost:3306/" \
+  WALLET_DB_USERNAME=root WALLET_DB_PASSWORD=secret \
+  WALLET_DB_DRIVER=com.mysql.cj.jdbc.Driver \
+  WALLET_KAFKA_ENABLED=true WALLET_KYC_HMAC_SECRET=e2e-internal \
+  WALLET_KYC_BASE_URL=http://localhost:8082 KAFKA_BOOTSTRAP=localhost:9092 \
+  mvn spring-boot:run
+# (kyc + gateway như mục "Cách chạy")
+
+# 4. Chạy kịch bản đa-tenant (in PASS/FAIL từng bước)
+bash e2e/scenario-tenant.sh
+
+# 5. Dọn
+docker compose down   # nhớ kill PID giữ cổng 8080/8081/8082
+```
+
+Kết quả mong đợi: **8 PASS / 0 FAIL** (onboard×2 + acme create + acme topup + globex-thấy-acme=404 +
+globex create + globex topup + 2 balance độc lập). `scenario-tenant.sh` re-run được phần onboard
+(201 lần đầu, 409 lần sau); ví/topup vẫn vướng `Idempotency-Key` toàn cục như SP3 → restart wallet
+nếu muốn chạy lại sạch.
+
 > ⚠️ Scenario KHÔNG re-run được trên cùng instance wallet: `Idempotency-Key` (`t1`/`w1`/...) là toàn cục theo đời sống wallet → chạy lần 2 đụng key cũ → 422 (đúng hành vi same-key-different-payload, Stage 2). Muốn chạy lại: **restart wallet** (H2 in-memory reset). Balance check dùng so-sánh-SỐ (`check_num`) vì API trả `70.00` còn kỳ vọng viết `70.0`.
