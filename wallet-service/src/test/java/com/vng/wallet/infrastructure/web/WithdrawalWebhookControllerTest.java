@@ -2,6 +2,8 @@ package com.vng.wallet.infrastructure.web;
 
 import com.vng.wallet.application.WithdrawalSettlementService;
 import com.vng.wallet.support.DefaultTenantHeaderConfig;
+import com.vng.wallet.tenancy.BankRef;
+import com.vng.wallet.tenancy.TenantContext;
 import com.vng.wallet.domain.BankClient;
 import com.vng.wallet.domain.Wallet;
 import com.vng.wallet.domain.WalletRepository;
@@ -34,6 +36,7 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -184,6 +187,35 @@ class WithdrawalWebhookControllerTest {
     }
 
     @Test
+    void bankRefEncodingTenant_setsTenantContext_beforeLookup() throws Exception {
+        // Bank webhook carries NO X-Tenant-Id; the controller must recover the tenant FROM the bankRef
+        // (BankRef-encoded) and set TenantContext before the routed findByBankRef (T9).
+        String bankRef = BankRef.create("acme");
+        wallets.store.clear();
+        orders.store.clear();
+        wallets.transactions.clear();
+        orders.observedTenantAtLookup = "<none>";
+        Wallet w = wallets.save(new Wallet(null, "user-1", "Alice",
+                new BigDecimal("100"), new BigDecimal("30"), null));
+        orders.save(new WithdrawalOrder(null, "user-1", w.getId(), new BigDecimal("30"),
+                WithdrawalState.SENT, bankRef, "k1", 1, Instant.now(), null));
+
+        String body = "{\"bankRef\":\"" + bankRef + "\",\"result\":\"SETTLED\"}";
+        String tsSig = sign(body);
+        mockMvc.perform(post(PATH)
+                        .header("X-Timestamp", tsSig.split(":", 2)[0])
+                        .header("X-Signature", tsSig.split(":", 2)[1])
+                        .contentType("application/json")
+                        .content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.result").value("APPLIED"));
+
+        assertEquals("acme", orders.observedTenantAtLookup,
+                "tenant from bankRef set on context before the routed lookup");
+        assertNull(TenantContext.get(), "context cleared after webhook handling (T4)");
+    }
+
+    @Test
     void badSignature_returns401() throws Exception {
         seedSentOrder();
         String body = "{\"bankRef\":\"wd-ref-1\",\"result\":\"SETTLED\"}";
@@ -235,6 +267,7 @@ class WithdrawalWebhookControllerTest {
     static class InMemoryOrderRepository implements WithdrawalOrderRepository {
         final Map<Long, WithdrawalOrder> store = new HashMap<>();
         final AtomicLong seq = new AtomicLong(0);
+        volatile String observedTenantAtLookup;
 
         @Override public WithdrawalOrder save(WithdrawalOrder order) {
             Long id = order.getId() != null ? order.getId() : seq.incrementAndGet();
@@ -248,6 +281,7 @@ class WithdrawalWebhookControllerTest {
         @Override public Optional<WithdrawalOrder> findById(Long id) { return Optional.ofNullable(store.get(id)); }
         @Override public Optional<WithdrawalOrder> findByIdempotencyKey(String k) { return Optional.empty(); }
         @Override public Optional<WithdrawalOrder> findByBankRef(String r) {
+            observedTenantAtLookup = TenantContext.get();
             return store.values().stream().filter(o -> r.equals(o.getBankRef())).findFirst();
         }
         @Override public Optional<WithdrawalOrder> findByIdAndUserId(Long id, String userId) {

@@ -4,6 +4,8 @@ import com.vng.wallet.application.WithdrawalSettlementService;
 import com.vng.wallet.domain.BankClient;
 import com.vng.wallet.domain.WithdrawalOrder;
 import com.vng.wallet.infrastructure.kyc.HmacSigner;
+import com.vng.wallet.tenancy.BankRef;
+import com.vng.wallet.tenancy.TenantContext;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -72,6 +74,28 @@ public class WithdrawalWebhookController {
                     .body(Map.of("error", "Invalid signature"));
         }
 
+        // SP5 T9: bank webhook KHÔNG mang X-Tenant-Id → khôi phục tenant từ bankRef (đã nhúng) rồi set
+        // context để lookup + applyTerminal route đúng schema. Khôi phục context cũ trong finally (T4)
+        // — TenantFilter sẽ tự clear sau, nhưng ta không được rò tenant này sang phần còn lại của filter.
+        String tenant = BankRef.tenantOf(body.bankRef());
+        String previous = TenantContext.get();
+        if (tenant != null) {
+            TenantContext.set(tenant);
+        }
+        try {
+            return handleSettlement(body);
+        } finally {
+            if (tenant != null) {
+                if (previous != null) {
+                    TenantContext.set(previous);
+                } else {
+                    TenantContext.clear();
+                }
+            }
+        }
+    }
+
+    private ResponseEntity<?> handleSettlement(SettlementNotification body) {
         // bankRef lạ -> IGNORED (200, không 4xx: bank không có gì để retry).
         Optional<WithdrawalOrder> found = orderRepository.findByBankRef(body.bankRef());
         if (found.isEmpty()) {

@@ -10,6 +10,8 @@ import com.vng.wallet.domain.WalletRepository;
 import com.vng.wallet.domain.WalletTransaction;
 import com.vng.wallet.domain.WithdrawalOrder;
 import com.vng.wallet.domain.WithdrawalOrderRepository;
+import com.vng.wallet.tenancy.BankRef;
+import com.vng.wallet.tenancy.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -20,7 +22,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
-import java.util.UUID;
 
 /**
  * USE CASES — điều phối nghiệp vụ. Phụ thuộc PORT (WalletRepository), không biết JPA.
@@ -204,7 +205,9 @@ public class WalletService {
         wallet.reserve(amount); // available -= amount; có thể ném InsufficientFunds -> rollback, không ghi gì
         walletRepository.save(wallet);
 
-        String bankRef = "wd-" + UUID.randomUUID(); // E7: sinh ở bước ①, cùng tx, dùng LẠI mọi retry tới bank
+        // E7: sinh ở bước ①, cùng tx, dùng LẠI mọi retry tới bank. SP5 T9: nhúng tenant vào bankRef
+        // để webhook bank (không có X-Tenant-Id) khôi phục được schema của order trước khi tra cứu.
+        String bankRef = BankRef.create(TenantContext.effective());
         WithdrawalOrder saved = withdrawalOrderRepository.save(
                 WithdrawalOrder.create(userId, walletId, amount, idempotencyKey, bankRef));
         // Ledger WITHDRAW_HOLD: total (balance) chưa đổi ở bước ① — tiền chỉ chuyển ví->escrow.
