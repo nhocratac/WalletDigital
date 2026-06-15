@@ -13,6 +13,7 @@ import com.vng.wallet.domain.WithdrawalOrderRepository;
 import com.vng.wallet.domain.WithdrawalState;
 import com.vng.wallet.infrastructure.bank.MockBankClient;
 import com.vng.wallet.support.AllowAllKycGateTestConfig;
+import com.vng.wallet.support.DefaultTenantContextConfig;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -42,7 +43,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  * double-spend (rút 2 lần cùng available → lần 2 thấy held → InsufficientFunds/422).
  */
 @SpringBootTest(properties = "wallet.bank.mock=true")
-@Import(AllowAllKycGateTestConfig.class)
+@Import({AllowAllKycGateTestConfig.class, DefaultTenantContextConfig.class})
 class WithdrawalSettlementMatrixIntegrationTest {
 
     @Autowired WalletService walletService;

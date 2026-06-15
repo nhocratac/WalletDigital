@@ -5,6 +5,7 @@ import com.vng.wallet.domain.Wallet;
 import com.vng.wallet.domain.WalletTransaction;
 import com.vng.wallet.infrastructure.persistence.SpringDataWalletTransactionJpa;
 import com.vng.wallet.support.AllowAllKycGateTestConfig;
+import com.vng.wallet.support.DefaultTenantContextConfig;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -30,7 +31,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * map ConcurrencyFailureException -> 409 ở tầng HTTP.
  */
 @SpringBootTest
-@Import(AllowAllKycGateTestConfig.class)   // mục đích file này là CONCURRENCY, không phải gate
+@Import({AllowAllKycGateTestConfig.class, DefaultTenantContextConfig.class})   // mục đích file này là CONCURRENCY, không phải gate
 class WalletConcurrencyIntegrationTest {
 
     @Autowired WalletService walletService;

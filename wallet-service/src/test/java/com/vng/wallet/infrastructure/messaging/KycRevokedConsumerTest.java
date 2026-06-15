@@ -4,10 +4,12 @@ import com.vng.wallet.domain.Wallet;
 import com.vng.wallet.domain.WalletRepository;
 import com.vng.wallet.domain.WalletTransaction;
 import com.vng.wallet.infrastructure.kyc.KycStatusCache;
+import com.vng.wallet.support.DefaultTenantContextConfig;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -27,6 +29,7 @@ import static org.junit.jupiter.api.Assertions.*;
 })
 @EmbeddedKafka(partitions = 3, topics = "kyc.revoked")
 @ExtendWith(OutputCaptureExtension.class)
+@Import(DefaultTenantContextConfig.class)
 class KycRevokedConsumerTest {
 
     @Autowired KycStatusCache cache;

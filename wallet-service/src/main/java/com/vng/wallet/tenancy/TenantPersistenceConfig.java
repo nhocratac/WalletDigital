@@ -45,6 +45,13 @@ public class TenantPersistenceConfig {
             JpaProperties jpaProperties) {
         Map<String, Object> props = new HashMap<>(jpaProperties.getProperties());
         props.put("hibernate.hbm2ddl.auto", "none");
+        // SP5 Task 4 (T1, T3): Hibernate SCHEMA multi-tenancy on THIS (tenant) unit. One shared pool;
+        // the connection provider switches schema per the resolver (which reads TenantContext). The
+        // master unit (MasterPersistenceConfig) is deliberately NOT wired this way — it stays non-routed.
+        props.put("hibernate.multiTenancy", "SCHEMA");
+        props.put("hibernate.multi_tenant_connection_provider",
+                new SchemaMultiTenantConnectionProvider(dataSource));
+        props.put("hibernate.tenant_identifier_resolver", new TenantSchemaResolver());
         return builder
                 .dataSource(dataSource)
                 .packages("com.vng.wallet.infrastructure.persistence")

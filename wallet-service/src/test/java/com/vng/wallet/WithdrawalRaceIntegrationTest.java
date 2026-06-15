@@ -10,6 +10,7 @@ import com.vng.wallet.domain.WithdrawalOrder;
 import com.vng.wallet.domain.WithdrawalOrderRepository;
 import com.vng.wallet.domain.WithdrawalState;
 import com.vng.wallet.support.AllowAllKycGateTestConfig;
+import com.vng.wallet.support.DefaultTenantContextConfig;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -39,7 +40,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * đúng MỘT bút toán {@code WITHDRAW_SETTLED} (không kép).
  */
 @SpringBootTest
-@Import(AllowAllKycGateTestConfig.class)
+@Import({AllowAllKycGateTestConfig.class, DefaultTenantContextConfig.class})
 class WithdrawalRaceIntegrationTest {
 
     @Autowired WalletService walletService;
