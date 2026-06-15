@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SP5 — Multi-Tenant Isolation (schema-per-tenant)</title>
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: true, theme: 'dark', sequence: { showSequenceNumbers: true } });
+</script>
+<style>
+  :root{--bg:#0f1117;--card:#171a21;--ink:#e6e6e6;--muted:#9aa4b2;--accent:#7c9cff;--accent2:#5be7c4;--line:#2a2f3a;--yellow:#ffd166;--red:#ff8a8a;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;line-height:1.6;font-size:16px;}
+  .wrap{max-width:1040px;margin:0 auto;padding:44px 24px 96px}
+  header.hero{background:linear-gradient(135deg,#1b2030,#11141c);border:1px solid var(--line);border-radius:16px;padding:30px;margin-bottom:28px;}
+  header.hero h1{margin:0 0 8px;font-size:28px}
+  .meta{color:var(--muted);font-size:14px;margin-top:10px}
+  h2{margin:40px 0 6px;font-size:21px;padding-bottom:8px;border-bottom:1px solid var(--line);color:#fff;}
+  h2 .num{color:var(--accent);margin-right:8px}
+  h3{margin:24px 0 4px;font-size:17px;color:#dbe2f0}
+  p{color:var(--ink)} p.lead{color:var(--muted);margin:6px 0 14px}
+  .diagram{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin:14px 0;overflow-x:auto}
+  .mermaid{display:flex;justify-content:center}
+  blockquote{margin:14px 0;padding:12px 16px;border-left:4px solid var(--yellow);background:rgba(255,209,102,.08);border-radius:0 10px 10px 0;color:#cfd6e4;}
+  blockquote strong{color:var(--yellow)}
+  blockquote.danger{border-left-color:var(--red);background:rgba(255,138,138,.08)} blockquote.danger strong{color:var(--red)}
+  code{background:rgba(255,255,255,.07);padding:2px 6px;border-radius:5px;font-size:13.5px;font-family:"SF Mono",Menlo,Consolas,monospace;color:var(--accent2)}
+  table{border-collapse:collapse;width:100%;margin:14px 0;font-size:14px}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:rgba(124,156,255,.12);color:#fff}
+  .toc{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 20px;columns:2;font-size:14px}
+  .toc a{color:var(--accent);text-decoration:none} .toc a:hover{text-decoration:underline}
+  footer{margin-top:48px;color:var(--muted);font-size:13px;text-align:center}
+  a.back{color:var(--accent);text-decoration:none;font-size:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <p><a class="back" href="../../../index.html">← Về trang chủ tài liệu</a></p>
+
+  <header class="hero">
+    <h1>🏢 SP5 — Multi-Tenant Isolation</h1>
+    <div class="meta">📅 2026-06-15 · schema-per-tenant THẬT: cô lập bằng cấu trúc, tenant routing, master registry, Flyway + fleet migration · Mermaid render trong browser</div>
+    <div class="meta">Tiền đề: SP1–SP4 (222 test). Gateway đã mang tenantId trong JWT. Quyết định T1–T10 do người học tự suy ra (Socratic).</div>
+  </header>
+
+  <div class="toc">
+    <a href="#s1">1. Lỗ hổng: tenant bị vứt</a><br>
+    <a href="#s2">2. Tenant vs User</a><br>
+    <a href="#s3">3. Quy ước vs Cấu trúc ⭐</a><br>
+    <a href="#s4">4. Routing: Filter→Context→DataSource</a><br>
+    <a href="#s5">5. Bẫy ThreadLocal</a><br>
+    <a href="#s6">6. Master registry (chicken-egg)</a><br>
+    <a href="#s7">7. Provisioning + Flyway</a><br>
+    <a href="#s8">8. Fleet migration + expand/contract</a><br>
+    <a href="#s9">9. SP4 worker đa-tenant</a><br>
+    <a href="#s10">10. Bảng quyết định T1–T10</a>
+  </div>
+
+  <h2 id="s1"><span class="num">1.</span>Lỗ hổng: gateway mang tenant tới cửa, wallet vứt đi</h2>
+  <p class="lead">Đúng cùng hình lỗ hổng TraceId: gateway gắn, downstream bỏ. Wallet hiện chỉ cô lập theo userId (D2), chưa theo tenant — mọi tenant trộn chung một schema.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+    JWT["JWT (userId, tenantId)"] --> GW["api-gateway<br/>✅ bóc tenantId → gửi X-Tenant-Id"]
+    GW -->|"X-Tenant-Id"| W["wallet-service<br/>❌ VỨT — không cô lập theo tenant"]
+    W --> DB[("1 schema chung<br/>mọi tenant TRỘN chung")]
+  </pre></div>
+
+  <h2 id="s2"><span class="num">2.</span>Tenant ≠ User — hai tầng cô lập</h2>
+  <p class="lead">Tenant = khách hàng-tổ chức thuê nền tảng (Shopee, Lazada) chạy chung 1 codebase. User = người dùng cuối BÊN TRONG một tenant.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart TB
+    B["🏢 1 codebase / 1 hệ thống (multi-tenant)"]
+    B --> T1["Tenant: Shopee"]
+    B --> T2["Tenant: Lazada"]
+    T1 --> U1["users: An, Bình... → ví riêng"]
+    T2 --> U2["users: Dũng, Em... → ví riêng"]
+  </pre></div>
+  <table>
+    <tr><th>Tầng</th><th>Cô lập giữa</th><th>Cơ chế</th><th>Lộ thì</th></tr>
+    <tr><td><b>Tenant</b> (SP5)</td><td>công ty ↔ công ty</td><td>schema-per-tenant</td><td>thảm họa hợp đồng/pháp lý (existential)</td></tr>
+    <tr><td><b>User</b> (D2, đã có)</td><td>người ↔ người trong 1 tenant</td><td><code>WHERE user_id=?</code></td><td>nội bộ, tệ nhưng nhỏ hơn</td></tr>
+  </table>
+
+  <h2 id="s3"><span class="num">3.</span>⭐ Cô lập bằng QUY ƯỚC vs bằng CẤU TRÚC (T1, T2)</h2>
+  <p class="lead">Câu hỏi cốt lõi: vì sao schema-per-tenant chứ không phải "1 bảng chung + cột tenant_id + WHERE"?</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart TB
+    subgraph SHARED["Bảng chung — cô lập bằng QUY ƯỚC (dev phải NHỚ WHERE)"]
+        Q1["SELECT * FROM wallet  (quên WHERE tenant_id)"] --> ALL["thấy MỌI tenant 💥"]
+    end
+    subgraph SCHEMA["schema-per-tenant — cô lập bằng CẤU TRÚC"]
+        C["connection → schema 'shopee'"] --> Q2["SELECT * FROM wallet  (quên WHERE)"]
+        Q2 --> ONLY["chỉ thấy ví Shopee ✅<br/>bảng tenant khác KHÔNG nằm trong tầm nhìn"]
+    end
+  </pre></div>
+  <blockquote><strong>Insight:</strong> bảng chung phụ thuộc dev <i>nhớ</i> thêm WHERE ở MỌI query — 1 lần quên (JOIN, report, dev mới) = lộ toàn bộ. Schema-per-tenant dời ranh giới xuống tầng connection: query trần lỡ quên vẫn vô hại. "Make illegal states unrepresentable." Đáng trả giá nặng vì lộ-chéo tenant = hai <b>công ty</b> cạnh tranh thấy dữ liệu nhau → existential.</blockquote>
+
+  <h2 id="s4"><span class="num">4.</span>Routing: Filter → Context → DataSource (T3)</h2>
+  <p class="lead">Cùng pattern đã dùng cho X-User-Id và kế hoạch TraceId→MDC. Gateway đã cấp sẵn X-Tenant-Id.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart TB
+    REQ["request (X-Tenant-Id: shopee)"] --> F["TenantFilter (chạy sớm)<br/>TenantContext.set('shopee')"]
+    F --> CTX[("TenantContext = ThreadLocal")]
+    CTX --> R["RoutingDataSource.determineCurrentLookupKey()<br/>đọc TenantContext → 'shopee'"]
+    R --> CONN["mở connection vào schema shopee"]
+  </pre></div>
+  <blockquote><strong>Đọc:</strong> dời ranh giới tenant RA KHỎI câu WHERE, xuống tầng mở connection. Hibernate <code>CurrentTenantIdentifierResolver</code> + <code>MultiTenantConnectionProvider</code> (khuyên dùng) hoặc Spring <code>AbstractRoutingDataSource</code>. Thiếu X-Tenant-Id → 400 (không tin client tự khai, như D1).</blockquote>
+
+  <h2 id="s5"><span class="num">5.</span>Bẫy chí mạng: ThreadLocal không clear (T4)</h2>
+  <p class="lead">Web server tái dùng thread từ pool. Không clear → thread mang context tenant cũ sang request tenant kế → TÁI SINH đúng lỗ hổng lộ-chéo (mà còn khó thấy hơn).</p>
+  <div class="diagram"><pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant T as Thread #7 (pool)
+    participant CTX as ThreadLocal
+    T->>CTX: request shopee → set('shopee')
+    Note over T: xử lý xong... KHÔNG clear → trả thread về pool
+    T->>CTX: thread #7 tái dùng cho request lazada
+    Note over CTX: context VẪN 'shopee' 💥
+    T->>T: lazada mở connection vào schema SHOPEE → thấy/ghi nhầm dữ liệu shopee
+  </pre></div>
+  <blockquote class="danger"><strong>Quy tắc:</strong> ThreadLocal set ở đâu <b>clear ở đó, trong <code>finally</code></b> — kể cả request ném exception. <code>try { TenantContext.set(t); chain.doFilter(); } finally { TenantContext.clear(); }</code>. Áp y hệt cho MDC traceId. Bẫy này test 1 request luôn đúng, chỉ vỡ khi tải cao (thread tái dùng) — cực khó truy.</blockquote>
+
+  <h2 id="s6"><span class="num">6.</span>Master registry — vì sao cần chỗ chung (T5)</h2>
+  <p class="lead">Chicken-and-egg: routing phải tra map tenantId→schema TRƯỚC khi vào bất kỳ tenant nào.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+    A["muốn vào schema tenant X"] --> B["phải biết X tồn tại + schema tên gì"]
+    B --> C["map đó đọc ở đâu?"]
+    C -->|"nếu cất TRONG schema tenant"| D["phải VÀO schema mới đọc được 🔄"]
+    D --> A
+  </pre></div>
+  <blockquote><strong>Kết luận:</strong> phải có <b>master schema</b> (không thuộc tenant nào) giữ <code>tenant_registry(tenant_id, schema_name, status)</code> — đọc được trước khi routing. schema-per-tenant ≠ MỌI thứ per-tenant: dữ liệu <b>VỀ</b> tenant (danh bạ) tách khỏi dữ liệu <b>CỦA</b> tenant (ví/ledger/order). Worker cũng cần danh bạ này để lặp; provisioning ghi tenant mới trước khi schema của nó tồn tại.</blockquote>
+
+  <h2 id="s7"><span class="num">7.</span>Provisioning (eager) + Flyway (T6, T7)</h2>
+  <p class="lead">Tạo schema lúc ĐĂNG KÝ tenant (onboarding), không lazy lúc request đầu — để user thật không phải chờ dựng schema.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart TB
+    NEW["POST /admin/tenants {globex}"] --> R1["1. INSERT registry(globex, PROVISIONING)"]
+    R1 --> R2["2. CREATE SCHEMA tenant_globex"]
+    R2 --> R3["3. flyway.migrate(tenant_globex) → V1..Vn"]
+    R3 --> R4["4. status = ACTIVE"]
+    R3 -->|lỗi| RF["status = MIGRATION_FAILED (không ACTIVE nửa vời)"]
+  </pre></div>
+  <p class="lead">Flyway = "git cho cấu trúc DB": versioned SQL + history table mỗi schema → mọi schema hội tụ cùng hình dạng.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart TB
+    NEWS["tenant mới (schema rỗng)"] -->|flyway migrate| F1["chạy V1→V4 từ đầu → cấu trúc CHUẨN ✅"]
+    OLDS["tenant cũ (đang V3)"] -->|flyway migrate| F2["chỉ chạy V4 còn thiếu → cũng CHUẨN ✅"]
+  </pre></div>
+  <blockquote><strong>Bài học:</strong> MỘT bộ file V duy nhất là nguồn sự thật cho cấu trúc; cũ-mới đều chạy qua cùng chuỗi → không thể lệch cột. Mỗi V chạy đúng một lần (history table).</blockquote>
+
+  <h2 id="s8"><span class="num">8.</span>Fleet migration + Expand/Contract (T8)</h2>
+  <p class="lead">Chạy V mới lên N schema đang sống — KHÔNG nguyên tử được (như "khe hở" phân tán SP3). Hai vũ khí.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart TB
+    J["Migration job: lặp registry (ACTIVE)"] --> L{từng tenant}
+    L --> OK1["shopee → V5 ✅"]
+    L --> ERR["tenant #37 → LỖI ❌ (status=MIGRATION_FAILED, KHÔNG chặn tenant khác)"]
+    L --> OK2["tiki → V5 ✅"]
+    ERR --> RT["chạy lại job → Flyway bỏ qua cái đã xong, retry #37; lỗi dai → ops (như NEEDS_MANUAL_REVIEW SP4)"]
+  </pre></div>
+  <p class="lead">Vũ khí 2 — làm mixed-version AN TOÀN: rename <code>owner_name → display_name</code> = 5 bước, KHÔNG <code>RENAME</code> một phát.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+    A["1. EXPAND: add display_name (nullable)"] --> B["2. DUAL-WRITE cả hai (đọc owner_name)"]
+    B --> C["3. BACKFILL owner_name→display_name"]
+    C --> D["4. SWITCH READ sang display_name"]
+    D --> E["5. CONTRACT: drop owner_name"]
+  </pre></div>
+  <blockquote><strong>Bài học:</strong> một thay đổi "phá vỡ" = chuỗi thay đổi "chỉ-thêm" tương thích ngược. Tại mọi thời điểm code chỉ cần MỘT cột và cột đó luôn có dữ liệu đúng → tenant V_cũ & V_mới cùng chạy. Tách deploy-schema và deploy-code; chỉ xóa cũ khi chắc không ai dùng. (zero-downtime)</blockquote>
+
+  <h2 id="s9"><span class="num">9.</span>SP4 worker đa-tenant (T9)</h2>
+  <p class="lead">Reconciliation worker chạy trên thread @Scheduled — không request, không filter → phải tự lặp registry + set context per tenant.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart TB
+    W["@Scheduled reconcileAllTenants()"] --> L{lặp registry ACTIVE}
+    L --> S["TenantContext.set(tenant)"]
+    S --> R["reconcile orders trong schema tenant đó"]
+    R --> C["TenantContext.clear() — finally!"]
+    C --> L
+  </pre></div>
+  <blockquote><strong>Đọc:</strong> orders mỗi tenant ở schema khác nhau → không thể quét một phát. Reviewer SP4 đã chạm bản nhẹ ("isolate scheduler context from shared H2", commit <code>29751a9</code>); SP5 tổng quát hóa. Webhook bank chạy trên request-thread nên có context bình thường (bank gửi tenant / bankRef mã hóa tenant).</blockquote>
+
+  <h2 id="s10"><span class="num">10.</span>Bảng quyết định T1–T10</h2>
+  <table>
+    <tr><th>#</th><th>Quyết định</th><th>Lý do cốt lõi</th></tr>
+    <tr><td>T1</td><td>schema-per-tenant (không phải cột tenant_id)</td><td>cô lập bằng cấu trúc, không bằng trí nhớ dev</td></tr>
+    <tr><td>T2</td><td>chấp nhận chi phí nặng hơn</td><td>lộ-chéo tenant = hai công ty → existential</td></tr>
+    <tr><td>T3</td><td>Filter → TenantContext (ThreadLocal) → routing datasource</td><td>dời ranh giới xuống tầng connection; tái dùng pattern</td></tr>
+    <tr><td>T4</td><td>clear ThreadLocal trong finally</td><td>thread tái dùng → lộ chéo nếu không clear</td></tr>
+    <tr><td>T5</td><td>master registry schema</td><td>chicken-egg routing; worker cần danh bạ; provisioning</td></tr>
+    <tr><td>T6</td><td>provisioning eager lúc đăng ký</td><td>user thật không phải chờ dựng schema</td></tr>
+    <tr><td>T7</td><td>Flyway versioned migrations</td><td>mọi schema hội tụ cùng cấu trúc</td></tr>
+    <tr><td>T8</td><td>fleet migration per-schema + expand/contract</td><td>không nguyên tử được → cô lập lỗi + mixed-version an toàn</td></tr>
+    <tr><td>T9</td><td>SP4 worker lặp registry + set context per tenant</td><td>thread @Scheduled không có request context</td></tr>
+    <tr><td>T10</td><td>H2→MySQL bắt buộc; cảnh báo pool explosion</td><td>cần DB thật + một pool đổi schema</td></tr>
+  </table>
+
+  <footer>SP5 Multi-Tenant Isolation · brainstorm Socratic 2026-06-15 · bản chi tiết: <code>2026-06-15-sp5-multi-tenant-isolation-design.md</code> · mở bằng trình duyệt để xem Mermaid render</footer>
+</div>
+</body>
+</html>
