@@ -24,6 +24,8 @@
         <!-- Compile to Java 21 bytecode (very stable + supported by every library),
              even though we RUN on Java 25. Avoids edge-case compatibility issues. -->
         <java.version>25</java.version>
+        <!-- Docker Engine API version handed to docker-java for Testcontainers (SP5). -->
+        <docker.api.version>1.43</docker.api.version>
     </properties>
 
     <dependencies>
@@ -47,11 +49,42 @@
         </dependency>
 
         <!-- H2: an in-memory database. Starts instantly, no install needed.
-             Stage 2 we'll replace this with MySQL. -->
+             SP5: still used for fast slice tests (H2 supports CREATE/SET SCHEMA). -->
         <dependency>
             <groupId>com.h2database</groupId>
             <artifactId>h2</artifactId>
             <scope>runtime</scope>
+        </dependency>
+
+        <!-- Flyway (SP5, T7): versioned SQL migrations REPLACE hibernate ddl-auto.
+             Migrations are the single source of truth for schema shape. -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+        <!-- flyway-mysql: MySQL-specific support module required by Flyway for MySQL. -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-mysql</artifactId>
+        </dependency>
+
+        <!-- MySQL driver (SP5, T10): prod target + Testcontainers integration realism. -->
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- Testcontainers MySQL (SP5): prod-realistic schema-per-tenant integration tests. -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>mysql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
         </dependency>
 
         <!-- MapStruct: sinh code mapping entity<->domain lúc COMPILE (không reflection). -->
@@ -114,6 +147,19 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+
+            <!-- Surefire: forward a modern Docker API version to docker-java (Testcontainers).
+                 docker-java's default (1.32) is rejected by modern engines (OrbStack/Docker >= API 1.40);
+                 1.43 negotiates cleanly. Harmless on engines that already negotiate. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <api.version>${docker.api.version}</api.version>
+                    </systemPropertyVariables>
+                </configuration>
             </plugin>
 
             <!-- Annotation processor: MapStruct sinh WalletMapperImpl lúc compile. -->
