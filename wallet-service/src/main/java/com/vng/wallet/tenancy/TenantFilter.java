@@ -22,12 +22,31 @@ import java.io.IOException;
  * routing rồi mới phát hiện thiếu context.
  *
  * <p>Tin cậy: {@code X-Tenant-Id} hiện CHƯA verify HMAC (wallet Stage 4 debt) — đọc thẳng từ header.
+ *
+ * <p>SP5 T9: bank-callback paths ({@code /webhooks/**}) are EXEMPT. The bank sends a direct,
+ * HMAC-signed request that carries NO {@code X-Tenant-Id} (it never goes through the gateway and
+ * doesn't know our tenants). If this filter ran on those paths it would 400 the callback before the
+ * controller could recover the tenant from the {@code bankRef}. Those endpoints resolve their own
+ * tenant context (see {@code WithdrawalWebhookController}).
  */
 @Component
 @Order(1)
 public class TenantFilter extends OncePerRequestFilter {
 
     public static final String HEADER = "X-Tenant-Id";
+
+    /** Paths whose requests carry no {@code X-Tenant-Id} and resolve tenant themselves (bank webhooks). */
+    private static final String WEBHOOK_PREFIX = "/webhooks/";
+
+    /**
+     * Skip bank-callback paths: they arrive without {@code X-Tenant-Id} and recover the tenant from the
+     * payload's {@code bankRef} inside the controller. Filtering them would 400 before the controller runs.
+     */
+    @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        String path = request.getRequestURI();
+        return path != null && path.startsWith(WEBHOOK_PREFIX);
+    }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,

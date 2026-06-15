@@ -74,11 +74,22 @@ public class WithdrawalWebhookController {
                     .body(Map.of("error", "Invalid signature"));
         }
 
-        // SP5 T9: bank webhook KHÔNG mang X-Tenant-Id → khôi phục tenant từ bankRef (đã nhúng) rồi set
-        // context để lookup + applyTerminal route đúng schema. Khôi phục context cũ trong finally (T4)
-        // — TenantFilter sẽ tự clear sau, nhưng ta không được rò tenant này sang phần còn lại của filter.
+        // SP5 T9: bank webhook KHÔNG mang X-Tenant-Id (TenantFilter exempts /webhooks/**) → khôi phục
+        // tenant từ bankRef (đã nhúng) rồi set context để lookup + applyTerminal route đúng schema.
+        // Khôi phục context cũ trong finally (T4) — không rò tenant này sang phần còn lại của chain.
         String tenant = BankRef.tenantOf(body.bankRef());
         String previous = TenantContext.get();
+
+        // FAIL-CLOSED guard: legacy/foreign refs (wd-<uuid> hay ref lạ) không mã hóa tenant → tenantOf=null.
+        // Trên request webhook header-less, context cũng rỗng → một routed findByBankRef sẽ trỏ
+        // EMPTY_SENTINEL và NÉM (500). Bank không có gì để retry với ref lạ → trả IGNORED (200) NGAY,
+        // KHÔNG chạm tầng routing. Dùng effective() (giá trị routing thật sự dùng) nên test single-schema
+        // có default-tenant fallback vẫn lookup được legacy ref như cũ.
+        if (tenant == null && isUnroutable()) {
+            log.info("webhook ignored: bankRef={} has no tenant and no context to route", body.bankRef());
+            return ResponseEntity.ok(Map.of("result", "IGNORED"));
+        }
+
         if (tenant != null) {
             TenantContext.set(tenant);
         }
@@ -93,6 +104,16 @@ public class WithdrawalWebhookController {
                 }
             }
         }
+    }
+
+    /**
+     * True when there is no tenant the routed lookup could use — i.e. {@link TenantContext#effective()}
+     * is empty, so {@code TenantSchemas.currentSchema()} would yield the fail-closed EMPTY_SENTINEL and a
+     * routed query would throw. Mirrors the routing layer's emptiness test so the guard and the router agree.
+     */
+    private static boolean isUnroutable() {
+        String effective = TenantContext.effective();
+        return effective == null || effective.isBlank();
     }
 
     private ResponseEntity<?> handleSettlement(SettlementNotification body) {
