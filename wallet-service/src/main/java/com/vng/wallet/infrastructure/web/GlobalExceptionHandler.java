@@ -79,6 +79,12 @@ public class GlobalExceptionHandler {
                 .body(Map.of("error", ex.getMessage()));
     }
 
+    @ExceptionHandler(com.vng.wallet.tenancy.TenantAlreadyExistsException.class)
+    public ResponseEntity<Map<String, String>> tenantExists(com.vng.wallet.tenancy.TenantAlreadyExistsException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT) // 409: tenant đã onboard, không ghi đè
+                .body(Map.of("error", ex.getMessage()));
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, String>> badArgument(IllegalArgumentException ex) {
         return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
