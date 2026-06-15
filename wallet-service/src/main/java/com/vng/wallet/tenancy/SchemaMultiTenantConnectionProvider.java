@@ -65,10 +65,23 @@ public class SchemaMultiTenantConnectionProvider implements MultiTenantConnectio
     @Override
     public Connection getConnection(String schemaIdentifier) throws SQLException {
         Connection connection = borrow();
-        if (!TenantSchemas.DEFAULT_SENTINEL.equals(schemaIdentifier)) {
-            // Real tenant OR the empty sentinel: switch schema. For __no_tenant__ this throws on a
-            // non-existent schema — fail-closed, as required.
-            switchSchema(connection, schemaIdentifier);
+        try {
+            if (!TenantSchemas.DEFAULT_SENTINEL.equals(schemaIdentifier)) {
+                // Real tenant OR the empty sentinel: switch schema. For __no_tenant__ this throws on
+                // a non-existent schema — fail-closed, as required.
+                switchSchema(connection, schemaIdentifier);
+            }
+        } catch (SQLException | RuntimeException e) {
+            // The switch threw BEFORE we returned the connection to Hibernate, so Hibernate will
+            // never call releaseConnection() for it. Close the borrowed connection here, otherwise
+            // every fail-closed (forgot-tenant) op orphans a pooled connection → pool exhaustion.
+            // Fail-closed semantics are preserved: we still rethrow, never returning a connection.
+            try {
+                connection.close();
+            } catch (SQLException closeFailure) {
+                e.addSuppressed(closeFailure);
+            }
+            throw e;
         }
         return connection;
     }
