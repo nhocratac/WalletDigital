@@ -50,6 +50,43 @@ R=$(curl -s -w '\n%{http_code}' -X POST "$GW/api/wallets/$WID/topup" \
 check "topup" "$(echo "$R" | tail -1)" "200"
 echo "  body: $(echo "$R" | head -1)"
 
+echo "=== [4b] SP6 Transfer 30 (THROUGH gateway) — A->B tức thời, double-entry, tổng bảo toàn ==="
+# Tạo ví NHẬN thứ hai (cùng user qua gateway — receiver không cần KYC; sender đã APPROVED ở [2]).
+R=$(curl -s -w '\n%{http_code}' -X POST "$GW/api/wallets" \
+  -H "Authorization: Bearer $JWT" -H "Content-Type: application/json" --data-raw '{"ownerName":"Bob"}')
+check "create receiver wallet" "$(echo "$R" | tail -1)" "201"
+WID2=$(echo "$R" | head -1 | sed -E 's/.*"id":([0-9]+).*/\1/')
+echo "  receiverWalletId=$WID2"
+# Topup thêm 30 vào A để sau khi transfer 30 ra, A trở về 100 — giữ nguyên các assertion withdraw [5] phía sau.
+R=$(curl -s -w '\n%{http_code}' -X POST "$GW/api/wallets/$WID/topup" \
+  -H "Authorization: Bearer $JWT" -H "Idempotency-Key: t-xfer-seed" \
+  -H "Content-Type: application/json" --data-raw '{"amount":30}')
+check "topup A +30 (seed for transfer)" "$(echo "$R" | tail -1)" "200"
+# balance trước transfer
+A_BEFORE=$(curl -s "$GW/api/wallets/$WID" -H "Authorization: Bearer $JWT" | sed -E 's/.*"balance":([0-9.]+).*/\1/')
+B_BEFORE=$(curl -s "$GW/api/wallets/$WID2" -H "Authorization: Bearer $JWT" | sed -E 's/.*"balance":([0-9.]+).*/\1/')
+# transfer 30 A->B
+R=$(curl -s -w '\n%{http_code}' -X POST "$GW/api/wallets/$WID/transfer" \
+  -H "Authorization: Bearer $JWT" -H "Idempotency-Key: xfer-1" \
+  -H "Content-Type: application/json" --data-raw "{\"toWalletId\":$WID2,\"amount\":30}")
+CODE=$(echo "$R" | tail -1); BODY=$(echo "$R" | head -1)
+check "transfer A->B (200)" "$CODE" "200"
+echo "  body: $BODY"
+A_AFTER=$(curl -s "$GW/api/wallets/$WID" -H "Authorization: Bearer $JWT" | sed -E 's/.*"balance":([0-9.]+).*/\1/')
+B_AFTER=$(curl -s "$GW/api/wallets/$WID2" -H "Authorization: Bearer $JWT" | sed -E 's/.*"balance":([0-9.]+).*/\1/')
+# A trừ 30, B cộng 30 — tổng (A+B) bảo toàn (tiền chỉ đổi chủ).
+check_num "A balance after transfer (100-30)" "$A_AFTER" "$(awk -v a="$A_BEFORE" 'BEGIN{print a-30}')"
+check_num "B balance after transfer (+30)" "$B_AFTER" "$(awk -v b="$B_BEFORE" 'BEGIN{print b+30}')"
+check_num "tong A+B bao toan" "$(awk -v a="$A_AFTER" -v b="$B_AFTER" 'BEGIN{print a+b}')" \
+  "$(awk -v a="$A_BEFORE" -v b="$B_BEFORE" 'BEGIN{print a+b}')"
+# replay cùng key -> KHÔNG chuyển lần hai (idempotent), A giữ nguyên sau replay.
+R=$(curl -s -w '\n%{http_code}' -X POST "$GW/api/wallets/$WID/transfer" \
+  -H "Authorization: Bearer $JWT" -H "Idempotency-Key: xfer-1" \
+  -H "Content-Type: application/json" --data-raw "{\"toWalletId\":$WID2,\"amount\":30}")
+check "transfer replay same key (200)" "$(echo "$R" | tail -1)" "200"
+A_REPLAY=$(curl -s "$GW/api/wallets/$WID" -H "Authorization: Bearer $JWT" | sed -E 's/.*"balance":([0-9.]+).*/\1/')
+check_num "A balance unchanged after replay (idempotent)" "$A_REPLAY" "$A_AFTER"
+
 # poll_state <walletId> <orderId> <expectedState> -> in PASS/FAIL khi đạt (hoặc timeout 20s)
 poll_state() {
   local wid="$1" oid="$2" want="$3" i st
