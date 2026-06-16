@@ -326,6 +326,27 @@ class WalletControllerTest {
     }
 
     @Test
+    void transfer_sameKeyDifferentPayload_returns409() throws Exception {
+        // Lần 1: key "tk-dup" -> 200 (lưu chân OUT với amount=30 cho key này).
+        mockMvc.perform(post("/wallets/1/transfer")
+                        .header("X-User-Id", "user-1")
+                        .header("Idempotency-Key", "tk-dup")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"toWalletId\":3,\"amount\":30.00}"))
+                .andExpect(status().isOk());
+
+        // Lần 2: cùng key, amount khác -> IdempotencyKeyConflict trên đường transfer -> 409
+        // (plan Task 4 Step 3 / design error-contract: "Cùng key, khác payload -> 409").
+        mockMvc.perform(post("/wallets/1/transfer")
+                        .header("X-User-Id", "user-1")
+                        .header("Idempotency-Key", "tk-dup")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"toWalletId\":3,\"amount\":60.00}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error").exists());
+    }
+
+    @Test
     void transfer_missingIdempotencyKey_returns400() throws Exception {
         mockMvc.perform(post("/wallets/1/transfer")
                         .header("X-User-Id", "user-1")

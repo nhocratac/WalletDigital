@@ -1,6 +1,7 @@
 package com.vng.wallet.application;
 
 import com.vng.wallet.domain.IdempotencyKeyConflictException;
+import com.vng.wallet.domain.TransferIdempotencyConflictException;
 import com.vng.wallet.domain.KycGate;
 import com.vng.wallet.domain.KycNotApprovedException;
 import com.vng.wallet.domain.KycUnavailableException;
@@ -279,13 +280,18 @@ public class WalletService {
      * Trả về transfer GỐC (ví nhận gốc), không echo {@code toId} của caller.
      */
     private TransferResult replayTransfer(WalletTransaction out, Long fromId, Long toId, BigDecimal amount) {
-        requireMatchingTransaction(out, fromId, WalletTransaction.Type.TRANSFER_OUT, amount);
+        // Khác từ/amount -> 409 (transfer-specific để web map 409, KHÔNG dùng base 422 của topup).
+        if (!out.walletId().equals(fromId)
+                || out.type() != WalletTransaction.Type.TRANSFER_OUT
+                || out.amount().compareTo(amount) != 0) {
+            throw new TransferIdempotencyConflictException(out.idempotencyKey());
+        }
         Long originalToId = walletRepository
                 .findTransactionByTransferIdAndType(out.transferId(), WalletTransaction.Type.TRANSFER_IN)
                 .map(WalletTransaction::walletId)
                 .orElse(null);
         if (originalToId == null || !originalToId.equals(toId)) {       // ví nhận lệch -> khác payload -> 409
-            throw new IdempotencyKeyConflictException(out.idempotencyKey());
+            throw new TransferIdempotencyConflictException(out.idempotencyKey());
         }
         return new TransferResult(out.transferId(), out.walletId(), originalToId, out.amount());
     }

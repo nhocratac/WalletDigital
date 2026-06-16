@@ -1,6 +1,7 @@
 package com.vng.wallet.infrastructure.web;
 
 import com.vng.wallet.domain.IdempotencyKeyConflictException;
+import com.vng.wallet.domain.TransferIdempotencyConflictException;
 import com.vng.wallet.domain.InsufficientFundsException;
 import com.vng.wallet.domain.InvalidWithdrawalTransitionException;
 import com.vng.wallet.domain.KycNotApprovedException;
@@ -52,6 +53,12 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(InvalidWithdrawalTransitionException.class)
     public ResponseEntity<Map<String, String>> invalidWithdrawalTransition(InvalidWithdrawalTransitionException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT) // 409: transition không hợp lệ trên state machine
+                .body(Map.of("error", ex.getMessage()));
+    }
+
+    @ExceptionHandler(TransferIdempotencyConflictException.class)
+    public ResponseEntity<Map<String, String>> transferIdempotencyConflict(TransferIdempotencyConflictException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT) // 409: cùng key, khác payload trên transfer (plan SP6 Task 4)
                 .body(Map.of("error", ex.getMessage()));
     }
 
