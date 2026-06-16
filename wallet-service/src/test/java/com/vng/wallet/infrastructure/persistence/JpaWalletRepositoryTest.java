@@ -82,6 +82,30 @@ class JpaWalletRepositoryTest {
     }
 
     @Test
+    void findById_returnsWalletRegardlessOfOwner_forReceiverLookup() {
+        // SP6 TR5: receiver wallet loaded by id only (NOT scoped to caller). A caller transferring
+        // to someone else's wallet must still find it. Within a tenant schema (SP5 routing), only
+        // wallets of the current tenant exist — cross-tenant receivers simply won't be present.
+        Wallet receiver = repository.save(Wallet.createNew("user-B", "Bob"));
+        em.flush(); em.clear();
+
+        // caller is user-A, receiver belongs to user-B: scoped lookup misses, by-id lookup hits
+        assertTrue(repository.findByIdAndUserId(receiver.getId(), "user-A").isEmpty(),
+                "scoped query must NOT return another owner's wallet (sender D2 path)");
+        Optional<Wallet> byId = repository.findById(receiver.getId());
+        assertTrue(byId.isPresent(), "findById must return the receiver wallet regardless of owner (TR5)");
+        assertEquals("user-B", byId.get().getUserId());
+        assertEquals("Bob", byId.get().getOwnerName());
+    }
+
+    @Test
+    void findById_emptyWhenWalletAbsentFromTenantSchema() {
+        // No wallet with this id exists in the current tenant schema -> empty (cross-tenant receiver
+        // is enforced "for free" by SP5 routing: it lives in another schema, invisible here).
+        assertTrue(repository.findById(424242L).isEmpty());
+    }
+
+    @Test
     void transactionRoundTrip_andIdempotencyLookup() {
         Wallet w = repository.save(Wallet.createNew("user-1", "Alice"));
         WalletTransaction tx = repository.saveTransaction(new WalletTransaction(
