@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SP6 — Internal Transfer (ví → ví)</title>
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: true, theme: 'dark', sequence: { showSequenceNumbers: true } });
+</script>
+<style>
+  :root{--bg:#0f1117;--card:#171a21;--ink:#e6e6e6;--muted:#9aa4b2;--accent:#7c9cff;--accent2:#5be7c4;--line:#2a2f3a;--yellow:#ffd166;--red:#ff8a8a;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;line-height:1.6;font-size:16px;}
+  .wrap{max-width:1040px;margin:0 auto;padding:44px 24px 96px}
+  header.hero{background:linear-gradient(135deg,#1b2030,#11141c);border:1px solid var(--line);border-radius:16px;padding:30px;margin-bottom:28px;}
+  header.hero h1{margin:0 0 8px;font-size:28px}
+  .meta{color:var(--muted);font-size:14px;margin-top:10px}
+  h2{margin:40px 0 6px;font-size:21px;padding-bottom:8px;border-bottom:1px solid var(--line);color:#fff;}
+  h2 .num{color:var(--accent);margin-right:8px}
+  p.lead{color:var(--muted);margin:6px 0 14px}
+  .diagram{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin:14px 0;overflow-x:auto}
+  .mermaid{display:flex;justify-content:center}
+  blockquote{margin:14px 0;padding:12px 16px;border-left:4px solid var(--yellow);background:rgba(255,209,102,.08);border-radius:0 10px 10px 0;color:#cfd6e4;}
+  blockquote strong{color:var(--yellow)}
+  blockquote.danger{border-left-color:var(--red);background:rgba(255,138,138,.08)} blockquote.danger strong{color:var(--red)}
+  code{background:rgba(255,255,255,.07);padding:2px 6px;border-radius:5px;font-size:13.5px;font-family:"SF Mono",Menlo,Consolas,monospace;color:var(--accent2)}
+  table{border-collapse:collapse;width:100%;margin:14px 0;font-size:14px}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:rgba(124,156,255,.12);color:#fff}
+  .toc{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 20px;columns:2;font-size:14px}
+  .toc a{color:var(--accent);text-decoration:none} .toc a:hover{text-decoration:underline}
+  footer{margin-top:48px;color:var(--muted);font-size:13px;text-align:center}
+  a.back{color:var(--accent);text-decoration:none;font-size:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <p><a class="back" href="../../../index.html">← Về trang chủ tài liệu</a></p>
+
+  <header class="hero">
+    <h1>🔁 SP6 — Internal Transfer (ví → ví)</h1>
+    <div class="meta">📅 2026-06-16 · Lần đầu một giao dịch đụng HAI ví: atomicity 2 dòng + deadlock/lock-ordering · không chân ngoài · Mermaid render trong browser</div>
+    <div class="meta">Tiền đề: SP1–SP5 (262 test). Tái dùng @Version+race-recovery, scoped D2, TenantContext SP5, KycGate SP3. Quyết định TR1–TR8 (Socratic).</div>
+  </header>
+
+  <div class="toc">
+    <a href="#s1">1. Vấn đề: đụng HAI ví</a><br>
+    <a href="#s2">2. Atomicity + double-entry</a><br>
+    <a href="#s3">3. Deadlock & lock-ordering ⭐</a><br>
+    <a href="#s4">4. Optimistic vs Pessimistic</a><br>
+    <a href="#s5">5. Intra-tenant only (SP5)</a><br>
+    <a href="#s6">6. KYC bên gửi — chống layering</a><br>
+    <a href="#s7">7. IDOR + self-transfer</a><br>
+    <a href="#s8">8. Idempotency 1 biên 1 key</a><br>
+    <a href="#s9">9. Bảng quyết định TR1–TR8</a>
+  </div>
+
+  <h2 id="s1"><span class="num">1.</span>Vấn đề: lần đầu một giao dịch đụng HAI ví</h2>
+  <p class="lead">topup/withdraw chỉ đụng một ví. Transfer đụng hai → hai cái mới: atomicity nhiều dòng + concurrency (deadlock). Nhưng KHÔNG chân ngoài → đơn giản hơn withdraw một bậc.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+    A["Ví A: 100 → 50"] -->|"chuyển 50 (cùng tenant)"| B["Ví B: 30 → 80"]
+    N["KHÔNG escrow · KHÔNG worker · KHÔNG bank · KHÔNG unknown≠failed"]
+  </pre></div>
+
+  <h2 id="s2"><span class="num">2.</span>Atomicity + double-entry (TR1)</h2>
+  <p class="lead">Hai bước rời → crash giữa chừng → tiền bốc hơi. Gói một transaction → cả hai cùng rollback → tổng bảo toàn bằng cấu trúc.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart TB
+    TX["MỘT transaction ACID"]
+    TX --> D["TRANSFER_OUT: A −50"]
+    TX --> C["TRANSFER_IN:  B +50"]
+    D --> COMMIT["commit cả hai — hoặc rollback cả hai"]
+    C --> COMMIT
+    COMMIT --> INV["Σ balance toàn tenant KHÔNG đổi (tiền chỉ dịch chỗ)"]
+  </pre></div>
+  <blockquote><strong>Bài học:</strong> hai bút toán <code>TRANSFER_OUT</code> + <code>TRANSFER_IN</code> cùng <code>transferId</code>, cùng commit. Tiền không sinh/mất — chỉ chuyển giữa hai dòng (double-entry). Crash → cả hai rollback → không "bốc hơi".</blockquote>
+
+  <h2 id="s3"><span class="num">3.</span>⭐ Deadlock & lock-ordering (TR2)</h2>
+  <p class="lead">Transaction giờ khóa HAI dòng. Hai transfer ngược chiều, đồng thời, khóa theo thứ tự ngược → vòng chờ tròn.</p>
+  <div class="diagram"><pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant T1 as T1 (A→B)
+    participant T2 as T2 (B→A)
+    T1->>T1: khóa A ✔
+    T2->>T2: khóa B ✔
+    T1->>T2: xin B … (B đang bị T2 giữ) → chờ
+    T2->>T1: xin A … (A đang bị T1 giữ) → chờ
+    Note over T1,T2: vòng chờ tròn → DEADLOCK
+  </pre></div>
+  <blockquote><strong>Phá bằng lock-ordering:</strong> luôn khóa theo <code>ORDER BY wallet_id</code> (id nhỏ trước), bất kể chiều chuyển → cả hai giành id nhỏ trước → không còn circular wait → deadlock bất khả. Thứ tự dựa trên <b>id của tài nguyên bị khóa</b> (wallet_id), không phải userId.</blockquote>
+
+  <h2 id="s4"><span class="num">4.</span>Optimistic vs Pessimistic (TR2)</h2>
+  <p class="lead">Mặc định của em là optimistic @Version → KHÔNG giữ khóa → KHÔNG deadlock; đụng thì retry.</p>
+  <table>
+    <tr><th></th><th>Optimistic (@Version)</th><th>Pessimistic (FOR UPDATE)</th></tr>
+    <tr><td>deadlock</td><td>bất khả (không giữ khóa)</td><td>có thể → cần lock-ordering</td></tr>
+    <tr><td>khi đụng</td><td>1 bên thua version → retry</td><td>bên kia chờ khóa</td></tr>
+    <tr><td>hợp khi</td><td>ít tranh chấp (mặc định)</td><td>ví "nóng" (đo được)</td></tr>
+  </table>
+  <blockquote><strong>Chọn:</strong> optimistic + retry giới hạn làm mặc định (nhất quán Stage 2, transfer ngẫu nhiên ít đụng), nâng pessimistic+lock-ordering cho ví nóng <i>khi đo được</i>. Nguyên lý: optimistic = cược xung đột HIẾM (trả giá bằng retry); pessimistic = giả định xung đột THƯỜNG (trả giá bằng tuần tự hóa).</blockquote>
+
+  <h2 id="s5"><span class="num">5.</span>Intra-tenant only — chặn 2 tầng (TR3)</h2>
+  <div class="diagram"><pre class="mermaid">
+flowchart TB
+    Q["Cho transfer cross-tenant (acme→globex)?"]
+    Q -->|nghiệp vụ| B1["hai CÔNG TY riêng, 'kho ví riêng' → SAI mô hình"]
+    Q -->|kỹ thuật SP5| B2["1 connection = 1 schema → KHÔNG update 2 schema trong 1 tx → BẤT KHẢ"]
+    B1 --> C["→ transfer chỉ trong CÙNG tenant"]
+    B2 --> C
+  </pre></div>
+  <blockquote><strong>Đẹp:</strong> routing SP5 khiến cross-tenant transfer <i>bất khả về cấu trúc</i> — ví nhận ở tenant khác không tồn tại trong schema của caller → load rỗng → 404. Không cần check tenant thủ công; kiến trúc tự chặn.</blockquote>
+
+  <h2 id="s6"><span class="num">6.</span>KYC bên GỬI — chống layering (TR4)</h2>
+  <p class="lead">Nếu transfer-out không gác KYC, kẻ chưa-KYC lách cổng withdraw bằng cách chuyển qua ví đã-KYC.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+    M["Mallory (CHƯA KYC)<br/>bị chặn rút thẳng"] -->|"chuyển 100 (nếu transfer KHÔNG gác KYC)"| A["Alice (ĐÃ KYC, mule)"]
+    A -->|"rút bình thường"| OUT["💸 tiền RỜI HỆ — cổng KYC bị vô hiệu"]
+  </pre></div>
+  <blockquote class="danger"><strong>Layering (AML):</strong> transfer-out = đẩy value khỏi tầm kiểm soát = cùng lớp rủi ro withdraw → <b>bên GỬI phải KYC</b>. Bên NHẬN không cần (nhận tự do, R1) — mule chỉ bị chặn khi <i>chính nó</i> đi rút. Gác đúng nơi value rời tầm kiểm soát: withdraw + transfer-out.</blockquote>
+
+  <h2 id="s7"><span class="num">7.</span>IDOR + self-transfer (TR5, TR6)</h2>
+  <table>
+    <tr><th>Ví</th><th>Cách load</th><th>Vì sao</th></tr>
+    <tr><td>GỬI (from)</td><td><code>WHERE id=from AND user_id=caller</code> (D2) → 404</td><td>chỉ rút từ ví CỦA MÌNH (chống "gửi từ ví người khác")</td></tr>
+    <tr><td>NHẬN (to)</td><td><code>WHERE id=to</code> + cùng tenant (KHÔNG scope caller)</td><td>đang gửi cho người khác → không sở hữu; chỉ cần tồn tại + cùng tenant</td></tr>
+  </table>
+  <blockquote><strong>Self-transfer</strong> (<code>from == to</code>) → 400: vô nghĩa (net 0); lock cùng wallet_id hai lần → debit+credit cùng row, dễ bug; thường là lỗi/lạm dụng.</blockquote>
+
+  <h2 id="s8"><span class="num">8.</span>Idempotency — một biên, một key (TR7)</h2>
+  <p class="lead">Transfer mutate tiền + client retry → cần key. Nhưng chỉ MỘT biên retry (client→wallet) → một key (khác withdraw có thêm bankRef cho bank).</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+    C["Client (website) sinh UUID = key K<br/>giữ lại, gửi LẠI đúng K khi retry"] -->|"Idempotency-Key: K"| GW["gateway forward"]
+    GW --> W["wallet: cột UNIQUE(K)<br/>K đã thấy → trả transfer CŨ, không chuyển lần 2"]
+  </pre></div>
+  <blockquote><strong>Ai sinh key:</strong> CLIENT (phần mềm gọi API), không phải server — vì chỉ client biết "retry này cùng ý định trước". Server chỉ ÉP UNIQUE + trả kết quả cũ. <code>withdraw</code> có 2 biên (client→wallet, wallet→bank) = 2 key; <code>transfer</code> không chân ngoài = 1 biên = 1 key.</blockquote>
+
+  <h2 id="s9"><span class="num">9.</span>Bảng quyết định TR1–TR8</h2>
+  <table>
+    <tr><th>#</th><th>Quyết định</th><th>Lý do cốt lõi</th></tr>
+    <tr><td>TR1</td><td>1 transaction ACID + double-entry</td><td>crash → cả hai rollback → tổng bảo toàn</td></tr>
+    <tr><td>TR2</td><td>optimistic @Version + retry (mặc định); pessimistic+lock-ordering cho ví nóng</td><td>ít tranh chấp → optimistic thắng; deadlock chỉ ở pessimistic</td></tr>
+    <tr><td>TR3</td><td>intra-tenant only</td><td>nghiệp vụ + SP5 routing làm cross-tenant bất khả</td></tr>
+    <tr><td>TR4</td><td>bên gửi cần KYC, bên nhận không</td><td>chống layering/AML; just-in-time KYC</td></tr>
+    <tr><td>TR5</td><td>gửi scoped D2; nhận by-id + cùng tenant</td><td>chỉ rút từ ví mình; nhận không sở hữu</td></tr>
+    <tr><td>TR6</td><td>chặn self-transfer</td><td>vô nghĩa + lock cùng row dễ bug</td></tr>
+    <tr><td>TR7</td><td>1 idempotency-key (client sinh)</td><td>1 biên retry; không chân ngoài</td></tr>
+    <tr><td>TR8</td><td>không escrow/worker/webhook</td><td>tiền ở lại hệ, đồng bộ, không vùng rủi ro</td></tr>
+  </table>
+
+  <footer>SP6 Internal Transfer · brainstorm Socratic 2026-06-16 · bản chi tiết: <code>2026-06-16-sp6-internal-transfer-design.md</code> · mở bằng trình duyệt để xem Mermaid render</footer>
+</div>
+</body>
+</html>
