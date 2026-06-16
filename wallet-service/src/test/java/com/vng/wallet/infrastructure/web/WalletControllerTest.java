@@ -59,15 +59,22 @@ class WalletControllerTest {
             return new WalletService(new WalletRepository() {
                 @Override
                 public Wallet save(Wallet wallet) {
-                    // Stub: gán id cố định, giữ nguyên userId + ownerName + balance (0 cho ví mới).
-                    return new Wallet(1L, wallet.getUserId(), wallet.getOwnerName(), wallet.getBalance(), wallet.getHeld(), 0L);
+                    // Stub: ví mới (id null) gán id=1; ví đã có (transfer save từ/đến) giữ NGUYÊN id +
+                    // userId + ownerName + balance đã thay đổi (để TransferResponse phản ánh đúng).
+                    Long id = wallet.getId() != null ? wallet.getId() : 1L;
+                    return new Wallet(id, wallet.getUserId(), wallet.getOwnerName(),
+                            wallet.getBalance(), wallet.getHeld(), 0L);
                 }
 
-                // Helper stub: chỉ ví id=1 tồn tại (số dư 250.00); id khác -> rỗng -> 404.
+                // Helper stub: ví id=1 (user-1, 250.00) là ví GỬI của caller user-1;
+                // id=3 (user-3, 0.00) là ví NHẬN hợp lệ (khác chủ). id khác -> rỗng -> 404.
                 @Override
                 public Optional<Wallet> findById(Long id) {
                     if (id == 1L) {
                         return Optional.of(new Wallet(1L, "user-1", "Existing Owner", new BigDecimal("250.00"), BigDecimal.ZERO, 0L));
+                    }
+                    if (id == 3L) {
+                        return Optional.of(new Wallet(3L, "user-3", "Receiver", new BigDecimal("0.00"), BigDecimal.ZERO, 0L));
                     }
                     // Stub: id=2 mô phỏng thua tranh chấp lock ở tầng hạ tầng -> 409.
                     if (id == 2L) {
@@ -107,9 +114,12 @@ class WalletControllerTest {
                     WalletTransaction saved = new WalletTransaction(
                             transaction.id() != null ? transaction.id() : txSeq.incrementAndGet(),
                             transaction.walletId(), transaction.type(), transaction.amount(),
-                            transaction.idempotencyKey(), transaction.balanceAfter(), transaction.createdAt());
+                            transaction.idempotencyKey(), transaction.balanceAfter(), transaction.createdAt(),
+                            transaction.transferId());
                     transactions.add(saved);
-                    byKey.put(saved.idempotencyKey(), saved);
+                    if (saved.idempotencyKey() != null) {       // chân TRANSFER_IN có key=null — không index
+                        byKey.put(saved.idempotencyKey(), saved);
+                    }
                     return saved;
                 }
 
@@ -129,8 +139,12 @@ class WalletControllerTest {
                     return transactions.stream().filter(t -> t.walletId().equals(walletId)).toList();
                 }
             }, inMemoryOrderRepo(), noopTxTemplate(),
-            userId -> new com.vng.wallet.domain.KycGate.KycCheckResult(
-                    com.vng.wallet.domain.KycGate.Decision.ALLOWED, "APPROVED")); // gate allow-all cho test web
+            // Gate stub: mặc định ALLOWED; caller "kyc-denied" -> DENIED (để test transfer 403).
+            userId -> "kyc-denied".equals(userId)
+                    ? new com.vng.wallet.domain.KycGate.KycCheckResult(
+                            com.vng.wallet.domain.KycGate.Decision.DENIED, "PENDING")
+                    : new com.vng.wallet.domain.KycGate.KycCheckResult(
+                            com.vng.wallet.domain.KycGate.Decision.ALLOWED, "APPROVED"));
         }
 
         /** Stub order repo — đủ cho test web (replay rỗng + lưu mới gán id). */
@@ -248,5 +262,75 @@ class WalletControllerTest {
                         .content("{\"ownerName\":\"   \"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("ownerName must not be empty"));
+    }
+
+    // ──────────────────────────── SP6 Task 4 — POST /wallets/{id}/transfer ────────────────────────────
+
+    @Test
+    void transfer_returns200WithTransferResponse() throws Exception {
+        mockMvc.perform(post("/wallets/1/transfer")
+                        .header("X-User-Id", "user-1")
+                        .header("Idempotency-Key", "tk-ok")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"toWalletId\":3,\"amount\":30.00}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.transferId").isNotEmpty())
+                .andExpect(jsonPath("$.from").value(1))
+                .andExpect(jsonPath("$.to").value(3))
+                .andExpect(jsonPath("$.amount").value(30.00));
+    }
+
+    @Test
+    void transfer_selfTransfer_returns400() throws Exception {
+        mockMvc.perform(post("/wallets/1/transfer")
+                        .header("X-User-Id", "user-1")
+                        .header("Idempotency-Key", "tk-self")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"toWalletId\":1,\"amount\":10.00}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("cannot transfer to the same wallet"));
+    }
+
+    @Test
+    void transfer_senderNotOwnedByCaller_returns404() throws Exception {
+        // caller user-EVIL không sở hữu ví id=1 -> sender scoped lookup rỗng -> 404 (D2/D3).
+        mockMvc.perform(post("/wallets/1/transfer")
+                        .header("X-User-Id", "user-EVIL")
+                        .header("Idempotency-Key", "tk-evil")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"toWalletId\":3,\"amount\":10.00}"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void transfer_kycDenied_returns403() throws Exception {
+        // caller "kyc-denied" sở hữu ví id=1? Không — nhưng KYC gác NGOÀI tx, TRƯỚC khi load ví,
+        // nên DENIED chặn ngay với 403 bất kể chủ ví.
+        mockMvc.perform(post("/wallets/1/transfer")
+                        .header("X-User-Id", "kyc-denied")
+                        .header("Idempotency-Key", "tk-kyc")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"toWalletId\":3,\"amount\":10.00}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void transfer_insufficientFunds_returns422() throws Exception {
+        // ví id=1 có 250.00; chuyển 999.00 -> InsufficientFunds -> 422.
+        mockMvc.perform(post("/wallets/1/transfer")
+                        .header("X-User-Id", "user-1")
+                        .header("Idempotency-Key", "tk-poor")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"toWalletId\":3,\"amount\":999.00}"))
+                .andExpect(status().isUnprocessableEntity());
+    }
+
+    @Test
+    void transfer_missingIdempotencyKey_returns400() throws Exception {
+        mockMvc.perform(post("/wallets/1/transfer")
+                        .header("X-User-Id", "user-1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"toWalletId\":3,\"amount\":10.00}"))
+                .andExpect(status().isBadRequest());
     }
 }

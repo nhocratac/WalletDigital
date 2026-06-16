@@ -5,6 +5,8 @@ import com.vng.wallet.domain.Wallet;
 import com.vng.wallet.infrastructure.web.dto.CreateWalletRequest;
 import com.vng.wallet.infrastructure.web.dto.MoneyRequest;
 import com.vng.wallet.infrastructure.web.dto.TransactionResponse;
+import com.vng.wallet.infrastructure.web.dto.TransferRequest;
+import com.vng.wallet.infrastructure.web.dto.TransferResponse;
 import com.vng.wallet.infrastructure.web.dto.WalletResponse;
 import com.vng.wallet.infrastructure.web.dto.WithdrawalOrderResponse;
 import jakarta.validation.Valid;
@@ -71,6 +73,21 @@ public class WalletController {
                                                     @PathVariable Long orderId,
                                                     @RequestHeader("X-User-Id") String userId) {
         return WithdrawalOrderResponse.from(walletService.getWithdrawalOrder(id, orderId, userId));
+    }
+
+    /**
+     * SP6: chuyển tiền ví→ví TỨC THỜI (TR1–TR7). fromId từ path, caller từ X-User-Id, key từ
+     * Idempotency-Key (thiếu -> 400 qua MissingRequestHeaderException). toWalletId + amount từ body —
+     * KHÔNG đọc fromId/caller từ body (chống IDOR). Trả 200 + TransferResponse{transferId, from, to, amount}.
+     */
+    @PostMapping("/{fromId}/transfer")
+    public TransferResponse transfer(@PathVariable Long fromId,
+                                     @RequestHeader("X-User-Id") String userId,
+                                     @RequestHeader("Idempotency-Key") String idempotencyKey,
+                                     @Valid @RequestBody TransferRequest request) {
+        return TransferResponse.from(walletService.transfer(
+                fromId, request.toWalletId(), userId, request.amount(),
+                requireIdempotencyKey(idempotencyKey)));
     }
 
     private static String requireIdempotencyKey(String key) {
