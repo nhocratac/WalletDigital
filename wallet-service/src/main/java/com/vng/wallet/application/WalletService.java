@@ -22,6 +22,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * USE CASES — điều phối nghiệp vụ. Phụ thuộc PORT (WalletRepository), không biết JPA.
@@ -222,5 +223,107 @@ public class WalletService {
         if (!order.getWalletId().equals(walletId) || order.getAmount().compareTo(amount) != 0) {
             throw new IdempotencyKeyConflictException(order.getIdempotencyKey());
         }
+    }
+
+    // ───────────────────────────── SP6 — internal transfer (TR1–TR7) ─────────────────────────────
+
+    /** Kết quả transfer — đủ cho controller dựng TransferResponse. */
+    public record TransferResult(String transferId, Long fromWalletId, Long toWalletId, BigDecimal amount) {}
+
+    /**
+     * Chuyển tiền ví→ví, TỨC THỜI (không escrow). Thứ tự theo design §3:
+     * <pre>
+     * [0] validate: amount, key không blank, fromId != toId (self-transfer 400 — TR6)
+     * [1] replay (NGOÀI tx): key đã có -> trả transfer cũ, KHÔNG chuyển lần hai (TR7)
+     * [2] cổng KYC bên GỬI (NGOÀI tx — D4): DENIED->403, UNAVAILABLE->503 (TR4)
+     * [3] transaction: load gửi scoped (D2/404) + nhận by-id (TR5/404) ->
+     *     from.withdraw + to.topup + 2 bút toán TRANSFER_OUT(key)/TRANSFER_IN(null) cùng transferId (TR1)
+     * </pre>
+     * Race cùng key (unique trên chân OUT) -> {@link DataIntegrityViolationException} -> đọc lại
+     * transfer người thắng -> khớp payload -> trả; người thắng rollback -> rethrow -> 409 (TR2/TR7).
+     */
+    public TransferResult transfer(Long fromId, Long toId, String caller, BigDecimal amount, String idempotencyKey) {
+        validateKeyAndAmount(idempotencyKey, amount);                  // [0]
+        if (fromId.equals(toId)) {                                     // TR6 — self-transfer
+            throw new IllegalArgumentException("cannot transfer to the same wallet");
+        }
+        var existing = walletRepository.findTransactionByIdempotencyKey(idempotencyKey);
+        if (existing.isPresent()) {                                    // [1] replay -> KHÔNG đụng gate, KHÔNG chuyển lần 2
+            WalletTransaction out = existing.get();
+            requireMatchingTransaction(out, fromId, WalletTransaction.Type.TRANSFER_OUT, amount);
+            return new TransferResult(out.transferId(), out.walletId(), toId, out.amount());
+        }
+        KycGate.KycCheckResult kyc = kycGate.check(caller);            // [2] NGOÀI transaction (D4)
+        switch (kyc.decision()) {
+            case DENIED -> throw new KycNotApprovedException(kyc.kycStatus());
+            case UNAVAILABLE -> throw new KycUnavailableException();
+            case ALLOWED -> { /* qua cổng */ }
+        }
+        return executeTransferWithRecovery(fromId, toId, caller, amount, idempotencyKey);
+    }
+
+    private TransferResult executeTransferWithRecovery(Long fromId, Long toId, String caller,
+                                                       BigDecimal amount, String idempotencyKey) {
+        try {
+            return txTemplate.execute(status -> applyTransfer(fromId, toId, caller, amount, idempotencyKey));
+        } catch (DataIntegrityViolationException e) {
+            WalletTransaction winner = walletRepository.findTransactionByIdempotencyKey(idempotencyKey)
+                    .orElseThrow(() -> e); // winner cũng rollback -> rethrow -> handler map 409
+            requireMatchingTransaction(winner, fromId, WalletTransaction.Type.TRANSFER_OUT, amount);
+            return new TransferResult(winner.transferId(), winner.walletId(), toId, winner.amount());
+        }
+    }
+
+    /**
+     * Một transaction ACID: debit gửi + credit nhận + 2 bút toán double-entry — cùng commit/rollback.
+     * Tổng balance toàn tenant bảo toàn (tiền chỉ đổi chủ). Lock-ordering theo wallet_id tăng dần (TR2).
+     */
+    private TransferResult applyTransfer(Long fromId, Long toId, String caller,
+                                         BigDecimal amount, String idempotencyKey) {
+        validateKeyAndAmount(idempotencyKey, amount);
+        var existing = walletRepository.findTransactionByIdempotencyKey(idempotencyKey);
+        if (existing.isPresent()) {                                    // true retry trong tx -> KHÔNG chuyển lần hai
+            WalletTransaction out = existing.get();
+            requireMatchingTransaction(out, fromId, WalletTransaction.Type.TRANSFER_OUT, amount);
+            return new TransferResult(out.transferId(), out.walletId(), toId, out.amount());
+        }
+        // Lock-ordering: nạp/khóa hai ví theo id tăng dần — dễ suy luận, phòng deadlock nếu sau dùng pessimistic.
+        Wallet from;
+        Wallet to;
+        if (fromId <= toId) {
+            from = loadSender(fromId, caller);                         // scoped D2 -> 404 nếu sai chủ (TR5)
+            to = loadReceiver(toId);                                   // by-id, cùng tenant (SP5 routing) -> 404 (TR5)
+        } else {
+            to = loadReceiver(toId);
+            from = loadSender(fromId, caller);
+        }
+
+        from.withdraw(amount);                                         // balance -=; InsufficientFunds -> rollback
+        to.topup(amount);                                              // balance +=
+        Wallet savedFrom = walletRepository.save(from);                // @Version cả hai
+        Wallet savedTo = walletRepository.save(to);
+
+        String transferId = UUID.randomUUID().toString();
+        WalletTransaction out = walletRepository.saveTransaction(new WalletTransaction(
+                null, fromId, WalletTransaction.Type.TRANSFER_OUT, amount, idempotencyKey,
+                savedFrom.getBalance(), Instant.now(), transferId));   // chân OUT giữ key (UNIQUE — TR7)
+        walletRepository.saveTransaction(new WalletTransaction(
+                null, toId, WalletTransaction.Type.TRANSFER_IN, amount, null,
+                savedTo.getBalance(), Instant.now(), transferId));     // chân IN key=null (không replay độc lập)
+        return new TransferResult(out.transferId(), fromId, toId, amount);
+    }
+
+    private Wallet loadSender(Long fromId, String caller) {
+        return walletRepository.findByIdAndUserId(fromId, caller)
+                .orElseThrow(() -> {
+                    log.warn("AUDIT forbidden-or-missing sender wallet for transfer: walletId={}, callerUserId={}",
+                            fromId, caller);
+                    return new WalletNotFoundException(fromId); // 404 — giấu tồn tại (D2/D3)
+                });
+    }
+
+    private Wallet loadReceiver(Long toId) {
+        return walletRepository.findById(toId)
+                .orElseThrow(() -> new WalletNotFoundException(toId)); // 404 "recipient not found" (TR5/TR3)
     }
 }

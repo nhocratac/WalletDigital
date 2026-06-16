@@ -75,9 +75,12 @@ class WalletServiceTest {
             WalletTransaction saved = new WalletTransaction(
                     transaction.id() != null ? transaction.id() : txSeq.incrementAndGet(),
                     transaction.walletId(), transaction.type(), transaction.amount(),
-                    transaction.idempotencyKey(), transaction.balanceAfter(), transaction.createdAt());
+                    transaction.idempotencyKey(), transaction.balanceAfter(), transaction.createdAt(),
+                    transaction.transferId());
             transactions.add(saved);
-            byIdempotencyKey.put(saved.idempotencyKey(), saved);
+            if (saved.idempotencyKey() != null) {
+                byIdempotencyKey.put(saved.idempotencyKey(), saved);
+            }
             return saved;
         }
 
@@ -382,5 +385,156 @@ class WalletServiceTest {
         // chủ khác -> 404 (giấu tồn tại, D2)
         assertThrows(WalletNotFoundException.class,
                 () -> service.getWithdrawalOrder(w.getId(), order.getId(), "user-EVIL"));
+    }
+
+    // ───────────────────────────── SP6 — transfer (TR1–TR7) ─────────────────────────────
+
+    private Wallet seedWallet(String userId, String name, String balanceFundKey, BigDecimal balance) {
+        Wallet w = service.createWallet(userId, name);
+        if (balance.signum() > 0) {
+            service.topup(w.getId(), userId, balance, balanceFundKey);
+        }
+        return w;
+    }
+
+    @Test
+    void transfer_movesMoney_writesDoubleEntry_conservesTotal() {
+        Wallet from = seedWallet("user-A", "Alice", "fA", new BigDecimal("100.00"));
+        Wallet to = seedWallet("user-B", "Bob", "fB", new BigDecimal("20.00"));
+        BigDecimal sumBefore = service.getWallet(from.getId(), "user-A").getBalance()
+                .add(service.getWallet(to.getId(), "user-B").getBalance());
+
+        WalletService.TransferResult result =
+                service.transfer(from.getId(), to.getId(), "user-A", new BigDecimal("30.00"), "tk-1");
+
+        Wallet fromAfter = service.getWallet(from.getId(), "user-A");
+        Wallet toAfter = service.getWallet(to.getId(), "user-B");
+        assertEquals(0, new BigDecimal("70.00").compareTo(fromAfter.getBalance()), "sender debited");
+        assertEquals(0, new BigDecimal("50.00").compareTo(toAfter.getBalance()), "receiver credited");
+        // tổng bảo toàn
+        BigDecimal sumAfter = fromAfter.getBalance().add(toAfter.getBalance());
+        assertEquals(0, sumBefore.compareTo(sumAfter), "Σ balance conserved");
+
+        // double-entry: OUT(from,key) + IN(to,null), cùng transferId
+        assertNotNull(result.transferId());
+        WalletTransaction out = service.listTransactions(from.getId(), "user-A").stream()
+                .filter(t -> t.type() == WalletTransaction.Type.TRANSFER_OUT).findFirst().orElseThrow();
+        WalletTransaction in = service.listTransactions(to.getId(), "user-B").stream()
+                .filter(t -> t.type() == WalletTransaction.Type.TRANSFER_IN).findFirst().orElseThrow();
+        assertEquals("tk-1", out.idempotencyKey(), "key on OUT leg");
+        assertNull(in.idempotencyKey(), "IN leg has NULL key");
+        assertEquals(out.transferId(), in.transferId(), "shared transferId");
+        assertEquals(result.transferId(), out.transferId());
+    }
+
+    @Test
+    void transfer_selfTransfer_throws400() {
+        Wallet from = seedWallet("user-A", "Alice", "fA", new BigDecimal("100.00"));
+        assertThrows(IllegalArgumentException.class,
+                () -> service.transfer(from.getId(), from.getId(), "user-A", new BigDecimal("10.00"), "tk-self"));
+    }
+
+    @Test
+    void transfer_insufficientFunds_rollsBack_noLedger() {
+        Wallet from = seedWallet("user-A", "Alice", "fA", new BigDecimal("5.00"));
+        Wallet to = seedWallet("user-B", "Bob", "fB", new BigDecimal("0.00"));
+
+        assertThrows(InsufficientFundsException.class,
+                () -> service.transfer(from.getId(), to.getId(), "user-A", new BigDecimal("10.00"), "tk-broke"));
+
+        assertEquals(0, new BigDecimal("5.00").compareTo(service.getWallet(from.getId(), "user-A").getBalance()));
+        assertEquals(0, BigDecimal.ZERO.compareTo(service.getWallet(to.getId(), "user-B").getBalance()));
+        assertEquals(0, service.listTransactions(from.getId(), "user-A").stream()
+                .filter(t -> t.type() == WalletTransaction.Type.TRANSFER_OUT).count(), "no OUT ledger");
+        assertEquals(0, service.listTransactions(to.getId(), "user-B").stream()
+                .filter(t -> t.type() == WalletTransaction.Type.TRANSFER_IN).count(), "no IN ledger");
+    }
+
+    @Test
+    void transfer_kycDenied_throws403_noMoneyMoved() {
+        Wallet from = seedWallet("user-A", "Alice", "fA", new BigDecimal("100.00"));
+        Wallet to = seedWallet("user-B", "Bob", "fB", new BigDecimal("0.00"));
+        gate.next = new KycGate.KycCheckResult(KycGate.Decision.DENIED, "PENDING");
+
+        assertThrows(KycNotApprovedException.class,
+                () -> service.transfer(from.getId(), to.getId(), "user-A", new BigDecimal("10.00"), "tk-deny"));
+        assertEquals(0, new BigDecimal("100.00").compareTo(service.getWallet(from.getId(), "user-A").getBalance()));
+        assertEquals(0, BigDecimal.ZERO.compareTo(service.getWallet(to.getId(), "user-B").getBalance()));
+    }
+
+    @Test
+    void transfer_kycUnavailable_throws503() {
+        Wallet from = seedWallet("user-A", "Alice", "fA", new BigDecimal("100.00"));
+        Wallet to = seedWallet("user-B", "Bob", "fB", new BigDecimal("0.00"));
+        gate.next = new KycGate.KycCheckResult(KycGate.Decision.UNAVAILABLE, null);
+
+        assertThrows(KycUnavailableException.class,
+                () -> service.transfer(from.getId(), to.getId(), "user-A", new BigDecimal("10.00"), "tk-503"));
+    }
+
+    @Test
+    void transfer_checksKycOutsideTransaction() {
+        Wallet from = seedWallet("user-A", "Alice", "fA", new BigDecimal("100.00"));
+        Wallet to = seedWallet("user-B", "Bob", "fB", new BigDecimal("0.00"));
+
+        service.transfer(from.getId(), to.getId(), "user-A", new BigDecimal("10.00"), "tk-d4");
+
+        assertEquals(Boolean.FALSE, gate.calledInsideTransaction,
+                "KYC gate must be called OUTSIDE the DB transaction (D4)");
+    }
+
+    @Test
+    void transfer_replaySameKey_returnsExisting_neverMovesTwice() {
+        Wallet from = seedWallet("user-A", "Alice", "fA", new BigDecimal("100.00"));
+        Wallet to = seedWallet("user-B", "Bob", "fB", new BigDecimal("0.00"));
+        WalletService.TransferResult first =
+                service.transfer(from.getId(), to.getId(), "user-A", new BigDecimal("30.00"), "tk-replay");
+        gate.calls = 0;
+        gate.next = new KycGate.KycCheckResult(KycGate.Decision.DENIED, "REVOKED"); // would deny if checked
+
+        WalletService.TransferResult replay =
+                service.transfer(from.getId(), to.getId(), "user-A", new BigDecimal("30.00"), "tk-replay");
+
+        assertEquals(first.transferId(), replay.transferId(), "replay returns the existing transfer");
+        assertEquals(0, gate.calls, "replay does not re-check KYC gate");
+        assertEquals(0, new BigDecimal("70.00").compareTo(service.getWallet(from.getId(), "user-A").getBalance()),
+                "money moved only once");
+        assertEquals(0, new BigDecimal("30.00").compareTo(service.getWallet(to.getId(), "user-B").getBalance()));
+    }
+
+    @Test
+    void transfer_sameKeyDifferentPayload_throws409() {
+        Wallet from = seedWallet("user-A", "Alice", "fA", new BigDecimal("100.00"));
+        Wallet to = seedWallet("user-B", "Bob", "fB", new BigDecimal("0.00"));
+        service.transfer(from.getId(), to.getId(), "user-A", new BigDecimal("30.00"), "tk-mix");
+
+        assertThrows(IdempotencyKeyConflictException.class,
+                () -> service.transfer(from.getId(), to.getId(), "user-A", new BigDecimal("40.00"), "tk-mix"));
+    }
+
+    @Test
+    void transfer_senderNotOwnedByCaller_throws404() {
+        Wallet from = seedWallet("user-A", "Alice", "fA", new BigDecimal("100.00"));
+        Wallet to = seedWallet("user-B", "Bob", "fB", new BigDecimal("0.00"));
+
+        // caller user-EVIL tries to transfer FROM user-A's wallet
+        assertThrows(WalletNotFoundException.class,
+                () -> service.transfer(from.getId(), to.getId(), "user-EVIL", new BigDecimal("10.00"), "tk-evil"));
+    }
+
+    @Test
+    void transfer_receiverDoesNotExist_throws404() {
+        Wallet from = seedWallet("user-A", "Alice", "fA", new BigDecimal("100.00"));
+
+        assertThrows(WalletNotFoundException.class,
+                () -> service.transfer(from.getId(), 99999L, "user-A", new BigDecimal("10.00"), "tk-norecv"));
+    }
+
+    @Test
+    void transfer_blankKey_throws() {
+        Wallet from = seedWallet("user-A", "Alice", "fA", new BigDecimal("100.00"));
+        Wallet to = seedWallet("user-B", "Bob", "fB", new BigDecimal("0.00"));
+        assertThrows(IllegalArgumentException.class,
+                () -> service.transfer(from.getId(), to.getId(), "user-A", new BigDecimal("10.00"), " "));
     }
 }
