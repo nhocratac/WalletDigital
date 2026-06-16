@@ -152,6 +152,33 @@ class JpaWalletRepositoryTest {
     }
 
     @Test
+    void transferLedgerPair_persistsTransferIdAndNullKeyOnInLeg() {
+        Wallet from = repository.save(Wallet.createNew("user-A", "Alice"));
+        Wallet to = repository.save(Wallet.createNew("user-B", "Bob"));
+        String transferId = "transfer-xyz";
+
+        WalletTransaction out = repository.saveTransaction(new WalletTransaction(
+                null, from.getId(), WalletTransaction.Type.TRANSFER_OUT,
+                new BigDecimal("30.00"), "key-out", new BigDecimal("70.00"), Instant.now(), transferId));
+        WalletTransaction in = repository.saveTransaction(new WalletTransaction(
+                null, to.getId(), WalletTransaction.Type.TRANSFER_IN,
+                new BigDecimal("30.00"), null, new BigDecimal("30.00"), Instant.now(), transferId));
+        em.flush(); em.clear();
+
+        // OUT leg: key present, transferId stored, type correct
+        WalletTransaction reloadedOut = repository.findTransactionByIdempotencyKey("key-out").orElseThrow();
+        assertEquals(WalletTransaction.Type.TRANSFER_OUT, reloadedOut.type());
+        assertEquals(transferId, reloadedOut.transferId());
+
+        // IN leg: idempotency_key NULL is allowed (no UNIQUE violation), transferId shared
+        WalletTransaction reloadedIn = repository.listTransactions(to.getId()).get(0);
+        assertEquals(WalletTransaction.Type.TRANSFER_IN, reloadedIn.type());
+        assertNull(reloadedIn.idempotencyKey(), "IN leg carries no idempotency key");
+        assertEquals(transferId, reloadedIn.transferId(), "both legs share one transferId");
+        assertEquals(in.id(), reloadedIn.id());
+    }
+
+    @Test
     void duplicateIdempotencyKey_violatesDbConstraint() {
         Wallet w = repository.save(Wallet.createNew("user-1", "Bob"));
         repository.saveTransaction(new WalletTransaction(null, w.getId(),

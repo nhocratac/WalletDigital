@@ -32,8 +32,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * tenants stay compatible.
  *
  * <p>Runs on real MySQL (Testcontainers): CREATE SCHEMA + per-schema {@code flyway_schema_history}
- * are DB-realism concerns. Tenants are provisioned at the baseline V1..V3; the fleet job points at
- * a {@code fleet_v4} location (V1..V3 + a V4) — the realistic "ship a new version to the fleet".
+ * are DB-realism concerns. Tenants are provisioned at the baseline V1..V4 (V4 = SP6 transfer columns);
+ * the fleet job points at a {@code fleet_v4} location (V1..V4 + a V5 stand-in display_name) — the
+ * realistic "ship a new version to the fleet".
  */
 @SpringBootTest
 @Testcontainers
@@ -135,8 +136,8 @@ class FleetMigrationServiceTest {
         assertEquals(0, result.failed());
         for (String t : TENANTS) {
             String schema = TenantSchemas.schemaFor(t);
-            assertTrue(columnExists(schema, "wallet", "display_name"), t + " got V4 column");
-            assertEquals(4, latestVersion(schema), t + " at version 4");
+            assertTrue(columnExists(schema, "wallet", "display_name"), t + " got V5 column");
+            assertEquals(5, latestVersion(schema), t + " at version 5");
             assertEquals(TenantRegistry.Status.ACTIVE, statusOf(t), t + " stays ACTIVE");
         }
     }
@@ -146,7 +147,7 @@ class FleetMigrationServiceTest {
         for (String t : TENANTS) {
             provisioningService.provision(t);
         }
-        // Make bravo's V4 fail: pre-add the column V4 tries to add → duplicate-column error.
+        // Make bravo's V5 fail: pre-add the column V5 tries to add → duplicate-column error.
         exec("ALTER TABLE " + TenantSchemas.schemaFor("bravo") + ".wallet ADD COLUMN display_name VARCHAR(255)");
 
         FleetMigrationResult result = fleetAt(FLEET_V4_LOCATION).migrateAll();
@@ -156,12 +157,12 @@ class FleetMigrationServiceTest {
 
         // alfa, charlie advanced + stay ACTIVE.
         for (String t : new String[]{"alfa", "charlie"}) {
-            assertEquals(4, latestVersion(TenantSchemas.schemaFor(t)), t + " at V4");
+            assertEquals(5, latestVersion(TenantSchemas.schemaFor(t)), t + " at V5");
             assertEquals(TenantRegistry.Status.ACTIVE, statusOf(t));
         }
-        // bravo flagged for ops, NOT silently ACTIVE, never half-migrated past V3.
+        // bravo flagged for ops, NOT silently ACTIVE, never half-migrated past V4.
         assertEquals(TenantRegistry.Status.MIGRATION_FAILED, statusOf("bravo"));
-        assertEquals(3, latestVersion(TenantSchemas.schemaFor("bravo")), "bravo stuck at V3");
+        assertEquals(4, latestVersion(TenantSchemas.schemaFor("bravo")), "bravo stuck at V4");
     }
 
     @Test
@@ -179,11 +180,11 @@ class FleetMigrationServiceTest {
         exec("ALTER TABLE " + TenantSchemas.schemaFor("bravo") + ".wallet DROP COLUMN display_name");
         FleetMigrationResult rerun = fleetAt(FLEET_V4_LOCATION).migrateAll();
 
-        // alfa + charlie already at V4 → Flyway no-ops them (idempotent); bravo retried + succeeds.
+        // alfa + charlie already at V5 → Flyway no-ops them (idempotent); bravo retried + succeeds.
         assertEquals(3, rerun.succeeded(), "all three converge on re-run");
         assertEquals(0, rerun.failed());
         for (String t : TENANTS) {
-            assertEquals(4, latestVersion(TenantSchemas.schemaFor(t)), t + " converged on V4");
+            assertEquals(5, latestVersion(TenantSchemas.schemaFor(t)), t + " converged on V5");
             assertEquals(TenantRegistry.Status.ACTIVE, statusOf(t));
         }
         assertFalse(columnExists("information_schema", "wallet", "nonexistent"));

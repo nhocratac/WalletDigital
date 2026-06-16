@@ -23,14 +23,17 @@ public class WalletTransactionEntity {
     @Column(precision = 38, scale = 2)
     private BigDecimal balanceAfter;
     private Instant createdAt;
+    @Column(name = "transfer_id")
+    private String transferId; // SP6 (TR1): nhóm cặp double-entry TRANSFER_OUT/IN
 
     protected WalletTransactionEntity() {}
 
     public WalletTransactionEntity(Long id, Long walletId, WalletTransaction.Type type,
                                    BigDecimal amount, String idempotencyKey,
-                                   BigDecimal balanceAfter, Instant createdAt) {
+                                   BigDecimal balanceAfter, Instant createdAt, String transferId) {
         this.id = id; this.walletId = walletId; this.type = type; this.amount = amount;
         this.idempotencyKey = idempotencyKey; this.balanceAfter = balanceAfter; this.createdAt = createdAt;
+        this.transferId = transferId;
     }
 
     public Long getId() { return id; }
@@ -40,4 +43,5 @@ public class WalletTransactionEntity {
     public String getIdempotencyKey() { return idempotencyKey; }
     public BigDecimal getBalanceAfter() { return balanceAfter; }
     public Instant getCreatedAt() { return createdAt; }
+    public String getTransferId() { return transferId; }
 }
