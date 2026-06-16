@@ -259,6 +259,7 @@ class WithdrawalWebhookControllerTest {
             return saved;
         }
         @Override public Optional<WalletTransaction> findTransactionByIdempotencyKey(String k) { return Optional.empty(); }
+        @Override public Optional<WalletTransaction> findTransactionByTransferIdAndType(String t, WalletTransaction.Type type) { return Optional.empty(); }
         @Override public List<WalletTransaction> listTransactions(Long walletId) {
             return transactions.stream().filter(t -> t.walletId().equals(walletId)).toList();
         }

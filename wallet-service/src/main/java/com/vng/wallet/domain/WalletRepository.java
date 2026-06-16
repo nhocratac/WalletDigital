@@ -17,5 +17,7 @@ public interface WalletRepository {
 
     WalletTransaction saveTransaction(WalletTransaction transaction);
     Optional<WalletTransaction> findTransactionByIdempotencyKey(String idempotencyKey);
+    /** SP6: bút toán cùng transferId + type — dùng để soi chân TRANSFER_IN (ví nhận) khi replay (TR7). */
+    Optional<WalletTransaction> findTransactionByTransferIdAndType(String transferId, WalletTransaction.Type type);
     List<WalletTransaction> listTransactions(Long walletId);
 }

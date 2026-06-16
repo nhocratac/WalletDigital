@@ -249,9 +249,7 @@ public class WalletService {
         }
         var existing = walletRepository.findTransactionByIdempotencyKey(idempotencyKey);
         if (existing.isPresent()) {                                    // [1] replay -> KHÔNG đụng gate, KHÔNG chuyển lần 2
-            WalletTransaction out = existing.get();
-            requireMatchingTransaction(out, fromId, WalletTransaction.Type.TRANSFER_OUT, amount);
-            return new TransferResult(out.transferId(), out.walletId(), toId, out.amount());
+            return replayTransfer(existing.get(), fromId, toId, amount);
         }
         KycGate.KycCheckResult kyc = kycGate.check(caller);            // [2] NGOÀI transaction (D4)
         switch (kyc.decision()) {
@@ -269,9 +267,27 @@ public class WalletService {
         } catch (DataIntegrityViolationException e) {
             WalletTransaction winner = walletRepository.findTransactionByIdempotencyKey(idempotencyKey)
                     .orElseThrow(() -> e); // winner cũng rollback -> rethrow -> handler map 409
-            requireMatchingTransaction(winner, fromId, WalletTransaction.Type.TRANSFER_OUT, amount);
-            return new TransferResult(winner.transferId(), winner.walletId(), toId, winner.amount());
+            return replayTransfer(winner, fromId, toId, amount);
         }
+    }
+
+    /**
+     * Replay/recovery của transfer: chân OUT mang (fromId, amount, key) nhưng KHÔNG mang ví nhận,
+     * nên ví nhận là PHẦN của payload idempotent (plan Task 3 §8 / design error-contract):
+     * soi chân TRANSFER_IN cùng transferId để lấy ví nhận GỐC và so với {@code toId} của lần gọi lại.
+     * Lệch from/amount HOẶC lệch ví nhận -> {@link IdempotencyKeyConflictException} (409).
+     * Trả về transfer GỐC (ví nhận gốc), không echo {@code toId} của caller.
+     */
+    private TransferResult replayTransfer(WalletTransaction out, Long fromId, Long toId, BigDecimal amount) {
+        requireMatchingTransaction(out, fromId, WalletTransaction.Type.TRANSFER_OUT, amount);
+        Long originalToId = walletRepository
+                .findTransactionByTransferIdAndType(out.transferId(), WalletTransaction.Type.TRANSFER_IN)
+                .map(WalletTransaction::walletId)
+                .orElse(null);
+        if (originalToId == null || !originalToId.equals(toId)) {       // ví nhận lệch -> khác payload -> 409
+            throw new IdempotencyKeyConflictException(out.idempotencyKey());
+        }
+        return new TransferResult(out.transferId(), out.walletId(), originalToId, out.amount());
     }
 
     /**
@@ -283,9 +299,7 @@ public class WalletService {
         validateKeyAndAmount(idempotencyKey, amount);
         var existing = walletRepository.findTransactionByIdempotencyKey(idempotencyKey);
         if (existing.isPresent()) {                                    // true retry trong tx -> KHÔNG chuyển lần hai
-            WalletTransaction out = existing.get();
-            requireMatchingTransaction(out, fromId, WalletTransaction.Type.TRANSFER_OUT, amount);
-            return new TransferResult(out.transferId(), out.walletId(), toId, out.amount());
+            return replayTransfer(existing.get(), fromId, toId, amount);
         }
         // Lock-ordering: nạp/khóa hai ví theo id tăng dần — dễ suy luận, phòng deadlock nếu sau dùng pessimistic.
         Wallet from;

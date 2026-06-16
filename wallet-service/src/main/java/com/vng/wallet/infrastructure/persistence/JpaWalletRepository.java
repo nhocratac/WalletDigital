@@ -65,6 +65,11 @@ public class JpaWalletRepository implements WalletRepository {
     }
 
     @Override
+    public Optional<WalletTransaction> findTransactionByTransferIdAndType(String transferId, WalletTransaction.Type type) {
+        return txJpa.findByTransferIdAndType(transferId, type).map(mapper::toDomain);
+    }
+
+    @Override
     public List<WalletTransaction> listTransactions(Long walletId) {
         return txJpa.findByWalletIdOrderByCreatedAtAsc(walletId).stream().map(mapper::toDomain).toList();
     }

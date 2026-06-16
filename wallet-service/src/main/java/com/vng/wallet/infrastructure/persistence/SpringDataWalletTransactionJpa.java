@@ -9,6 +9,7 @@ import java.util.Optional;
 
 public interface SpringDataWalletTransactionJpa extends JpaRepository<WalletTransactionEntity, Long> {
     Optional<WalletTransactionEntity> findByIdempotencyKey(String idempotencyKey);
+    Optional<WalletTransactionEntity> findByTransferIdAndType(String transferId, WalletTransaction.Type type);
     List<WalletTransactionEntity> findByWalletIdOrderByCreatedAtAsc(Long walletId);
     List<WalletTransactionEntity> findByWalletIdInAndTypeAndCreatedAtGreaterThanEqual(
             List<Long> walletIds, WalletTransaction.Type type, Instant since);

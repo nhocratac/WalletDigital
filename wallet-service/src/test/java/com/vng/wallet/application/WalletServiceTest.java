@@ -90,6 +90,14 @@ class WalletServiceTest {
         }
 
         @Override
+        public Optional<WalletTransaction> findTransactionByTransferIdAndType(
+                String transferId, WalletTransaction.Type type) {
+            return transactions.stream()
+                    .filter(t -> transferId != null && transferId.equals(t.transferId()) && t.type() == type)
+                    .findFirst();
+        }
+
+        @Override
         public List<WalletTransaction> listTransactions(Long walletId) {
             return transactions.stream().filter(t -> t.walletId().equals(walletId)).toList();
         }
@@ -510,6 +518,27 @@ class WalletServiceTest {
 
         assertThrows(IdempotencyKeyConflictException.class,
                 () -> service.transfer(from.getId(), to.getId(), "user-A", new BigDecimal("40.00"), "tk-mix"));
+    }
+
+    /**
+     * Receiver IS part of the idempotent payload (plan Task 3 §8 / design error-contract):
+     * same key + same fromId + same amount but a DIFFERENT toWalletId must 409, not silently
+     * replay the original transfer. The OUT leg does not store the receiver, so the paired
+     * TRANSFER_IN (shared transferId) must be consulted to detect the mismatch.
+     */
+    @Test
+    void transfer_sameKeyDifferentReceiver_throws409() {
+        Wallet from = seedWallet("user-A", "Alice", "fA", new BigDecimal("100.00"));
+        Wallet to = seedWallet("user-B", "Bob", "fB", new BigDecimal("0.00"));
+        Wallet other = seedWallet("user-C", "Carol", "fC", new BigDecimal("0.00"));
+        service.transfer(from.getId(), to.getId(), "user-A", new BigDecimal("30.00"), "tk-recv");
+
+        assertThrows(IdempotencyKeyConflictException.class,
+                () -> service.transfer(from.getId(), other.getId(), "user-A", new BigDecimal("30.00"), "tk-recv"));
+
+        // and the original receiver is unchanged (no second credit leaked to the mismatched receiver)
+        assertEquals(0, new BigDecimal("0.00").compareTo(service.getWallet(other.getId(), "user-C").getBalance()));
+        assertEquals(0, new BigDecimal("30.00").compareTo(service.getWallet(to.getId(), "user-B").getBalance()));
     }
 
     @Test
