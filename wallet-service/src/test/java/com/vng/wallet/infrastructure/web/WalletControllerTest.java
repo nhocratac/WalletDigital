@@ -144,7 +144,39 @@ class WalletControllerTest {
                     ? new com.vng.wallet.domain.KycGate.KycCheckResult(
                             com.vng.wallet.domain.KycGate.Decision.DENIED, "PENDING")
                     : new com.vng.wallet.domain.KycGate.KycCheckResult(
-                            com.vng.wallet.domain.KycGate.Decision.ALLOWED, "APPROVED"));
+                            com.vng.wallet.domain.KycGate.Decision.ALLOWED, "APPROVED"),
+            new com.vng.wallet.idempotency.IdempotencyService(inMemoryIdempotencyStore()));
+        }
+
+        /** Stub idempotency store — INSERT thuần (trùng key → DIVE) mô phỏng UNIQUE PK (SP7 Task 3). */
+        static com.vng.wallet.idempotency.IdempotencyStore inMemoryIdempotencyStore() {
+            return new com.vng.wallet.idempotency.IdempotencyStore() {
+                private final Map<String, com.vng.wallet.idempotency.IdempotencyRecord> rows = new HashMap<>();
+
+                @Override
+                public Optional<com.vng.wallet.idempotency.IdempotencyRecord> find(String idempotencyKey) {
+                    return Optional.ofNullable(rows.get(idempotencyKey));
+                }
+
+                @Override
+                public com.vng.wallet.idempotency.IdempotencyRecord save(
+                        com.vng.wallet.idempotency.IdempotencyRecord record) {
+                    if (rows.containsKey(record.idempotencyKey())) {
+                        throw new org.springframework.dao.DataIntegrityViolationException(
+                                "duplicate key " + record.idempotencyKey());
+                    }
+                    rows.put(record.idempotencyKey(), record);
+                    return record;
+                }
+
+                @Override
+                public void updateResultRef(String idempotencyKey, String resultRef) {
+                    var r = rows.get(idempotencyKey);
+                    if (r == null) return;
+                    rows.put(idempotencyKey, new com.vng.wallet.idempotency.IdempotencyRecord(
+                            r.idempotencyKey(), r.operationType(), r.requestFingerprint(), resultRef, r.createdAt()));
+                }
+            };
         }
 
         /** Stub order repo — đủ cho test web (replay rỗng + lưu mới gán id). */

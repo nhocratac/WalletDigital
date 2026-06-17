@@ -58,22 +58,45 @@ public class IdempotencyService {
     }
 
     /**
-     * Reserve-key-FIRST. Claim key qua UNIQUE; nếu trùng → recovery. Gọi TRƯỚC khi chuyển tiền.
+     * Reserve-key-FIRST claim. Gọi TRONG transaction nghiệp vụ, TRƯỚC khi chuyển tiền: INSERT record
+     * claim key qua UNIQUE. Trùng key (sequential retry HOẶC race loser) → ném
+     * {@link DataIntegrityViolationException} — caller phải để DIVE thoát RA KHỎI transaction nghiệp
+     * vụ (rollback), rồi gọi {@link #recover} ở TRANSACTION MỚI (read sau khi tx hỏng đã thoát — nếu
+     * recover đọc trong cùng tx đã bị đánh dấu rollback-only thì query fail). Đây là bài học SP2/SP4:
+     * winner/loser recovery phải đọc NGOÀI transaction thất bại.
      *
-     * @return FRESH nếu key mới (cho phép chạy op); REPLAY(resultRef) nếu đã xử lý (KHÔNG chạy op)
+     * @throws DataIntegrityViolationException key đã được claim (→ caller catch ngoài tx → {@link #recover})
+     */
+    public void reserve(String idempotencyKey, String operationType, String fingerprint) {
+        store.save(new IdempotencyRecord(idempotencyKey, operationType, fingerprint, null, Instant.now()));
+    }
+
+    /**
+     * Recovery SAU khi {@link #reserve} ném DIVE — gọi NGOÀI transaction nghiệp vụ đã rollback (đọc ở
+     * transaction mới). fingerprint khớp → REPLAY(resultRef cũ); lệch → 409; record chưa có (winner
+     * cũng rollback) → rethrow DIVE gốc → handler map 409. Tiền KHÔNG bao giờ chuyển hai lần.
+     *
      * @throws IdempotencyKeyConflictException same-key-different-payload (→ 409)
+     */
+    public ReserveOutcome recover(String idempotencyKey, String fingerprint, DataIntegrityViolationException dive) {
+        IdempotencyRecord rec = store.find(idempotencyKey).orElseThrow(() -> dive); // winner rollback → rethrow → 409
+        if (!rec.requestFingerprint().equals(fingerprint)) {
+            throw new IdempotencyKeyConflictException(idempotencyKey);
+        }
+        return ReserveOutcome.ofReplay(rec.resultRef());
+    }
+
+    /**
+     * Tiện ích claim-or-recover trong MỘT lời gọi (dùng khi recovery read có thể chạy ngay — vd unit
+     * test fake store, hoặc context không có rollback-only). Production path tách {@link #reserve}
+     * (trong tx) + {@link #recover} (ngoài tx) để recovery đọc NGOÀI transaction thất bại.
      */
     public ReserveOutcome reserveOrReplay(String idempotencyKey, String operationType, String fingerprint) {
         try {
-            store.save(new IdempotencyRecord(idempotencyKey, operationType, fingerprint, null, Instant.now()));
+            reserve(idempotencyKey, operationType, fingerprint);
             return ReserveOutcome.ofFresh();
         } catch (DataIntegrityViolationException dive) {
-            // Race loser fail INSERT — đọc record winner đã claim để recovery.
-            IdempotencyRecord rec = store.find(idempotencyKey).orElseThrow(() -> dive); // winner rollback → rethrow → 409
-            if (!rec.requestFingerprint().equals(fingerprint)) {
-                throw new IdempotencyKeyConflictException(idempotencyKey);
-            }
-            return ReserveOutcome.ofReplay(rec.resultRef());
+            return recover(idempotencyKey, fingerprint, dive);
         }
     }
 

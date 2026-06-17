@@ -11,6 +11,7 @@ import com.vng.wallet.domain.WalletRepository;
 import com.vng.wallet.domain.WalletTransaction;
 import com.vng.wallet.domain.WithdrawalOrder;
 import com.vng.wallet.domain.WithdrawalOrderRepository;
+import com.vng.wallet.idempotency.IdempotencyService;
 import com.vng.wallet.tenancy.BankRef;
 import com.vng.wallet.tenancy.TenantContext;
 import org.slf4j.Logger;
@@ -38,14 +39,17 @@ public class WalletService {
     private final WithdrawalOrderRepository withdrawalOrderRepository;
     private final TransactionTemplate txTemplate;
     private final KycGate kycGate;
+    private final IdempotencyService idempotencyService;
 
     public WalletService(WalletRepository walletRepository,
                          WithdrawalOrderRepository withdrawalOrderRepository,
-                         TransactionTemplate txTemplate, KycGate kycGate) {
+                         TransactionTemplate txTemplate, KycGate kycGate,
+                         IdempotencyService idempotencyService) {
         this.walletRepository = walletRepository;
         this.withdrawalOrderRepository = withdrawalOrderRepository;
         this.txTemplate = txTemplate;
         this.kycGate = kycGate;
+        this.idempotencyService = idempotencyService;
     }
 
     @Transactional
@@ -115,23 +119,45 @@ public class WalletService {
     }
 
     /**
-     * Chạy nghiệp vụ tiền trong transaction (TransactionTemplate). Nếu thua race
-     * cùng Idempotency-Key (unique constraint -> DataIntegrityViolationException),
-     * đọc lại bút toán của người thắng SAU khi transaction thất bại đã kết thúc:
-     * khớp payload -> trả lại bút toán cũ (idempotent recovery); không khớp -> 422;
-     * người thắng cũng rollback -> ném lại DIVE -> 409 có kiểm soát.
+     * SP7 Bước 1 Task 3: dedup của topup giờ enforce qua {@code idempotency_record} (reserve-key-FIRST)
+     * thay vì pre-check ledger. Trong CÙNG transaction nghiệp vụ:
+     * <ol>
+     *   <li>{@code idempotencyService.reserveOrReplay} claim key TRƯỚC khi chuyển tiền (UNIQUE record);
+     *       same-key-diff-payload (fingerprint lệch) -> {@link IdempotencyKeyConflictException} (409).</li>
+     *   <li>FRESH -> chạy money op -> dual-write inline key lên ledger (chưa bỏ UNIQUE — Task 5) ->
+     *       {@code complete(key, txId)} ghi result_ref để replay trả đúng cái cũ.</li>
+     *   <li>REPLAY -> nạp lại bút toán winner qua inline key (dual-write còn) -> khớp payload (recovery)
+     *       -> trả CŨ, KHÔNG chuyển lần hai.</li>
+     * </ol>
+     * Race loser fail INSERT record (DIVE) -> recovery trong {@code reserveOrReplay}: winner đã commit
+     * -> REPLAY; winner rollback -> rethrow DIVE -> handler map 409. Tiền KHÔNG bao giờ chuyển hai lần.
      */
     private WalletTransaction executeWithIdempotentRecovery(Long walletId, String userId, BigDecimal amount,
                                                             String idempotencyKey, WalletTransaction.Type type) {
+        validateKeyAndAmount(idempotencyKey, amount);
+        String fingerprint = idempotencyService.fingerprintOf(type.name(), String.valueOf(walletId), amount.toPlainString());
         try {
-            return txTemplate.execute(status -> applyMoneyOperation(walletId, userId, amount, idempotencyKey, type));
-        } catch (DataIntegrityViolationException e) {
-            // Transaction thất bại đã thoát (execute() đã return) -> recovery read an toàn.
-            WalletTransaction winner = walletRepository.findTransactionByIdempotencyKey(idempotencyKey)
-                    .orElseThrow(() -> e); // winner rolled back -> rethrow -> handler map 409
-            requireMatchingTransaction(winner, walletId, type, amount);
-            return winner;
+            // reserve-key-FIRST + money op trong CÙNG tx — claim record TRƯỚC khi chuyển tiền.
+            return txTemplate.execute(status -> {
+                idempotencyService.reserve(idempotencyKey, type.name(), fingerprint); // DIVE nếu trùng -> rollback
+                WalletTransaction tx = applyTopup(walletId, userId, amount, idempotencyKey, type);
+                idempotencyService.complete(idempotencyKey, String.valueOf(tx.id())); // result_ref = txId
+                return tx;
+            });
+        } catch (DataIntegrityViolationException dive) {
+            // Tx thất bại đã thoát -> recovery read ở tx MỚI (NGOÀI tx hỏng). REPLAY -> trả CŨ; lệch -> 409.
+            idempotencyService.recover(idempotencyKey, fingerprint, dive);
+            return replayTopup(idempotencyKey, walletId, type, amount);
         }
+    }
+
+    /** REPLAY topup: nạp lại bút toán winner qua inline key (dual-write còn tới Task 5) + khớp payload. */
+    private WalletTransaction replayTopup(String idempotencyKey, Long walletId,
+                                          WalletTransaction.Type type, BigDecimal amount) {
+        WalletTransaction winner = walletRepository.findTransactionByIdempotencyKey(idempotencyKey)
+                .orElseThrow(() -> new IdempotencyKeyConflictException(idempotencyKey));
+        requireMatchingTransaction(winner, walletId, type, amount);
+        return winner;
     }
 
     /** Quy tắc khớp payload cho idempotency key — dùng cho cả pre-check lẫn recovery. */
@@ -153,19 +179,13 @@ public class WalletService {
     }
 
     /**
-     * Cả balance (cache) + bút toán (sổ cái) ghi trong CÙNG transaction —
-     * cùng commit hoặc cùng rollback. Idempotency: key đã có -> trả bút toán cũ.
+     * Áp topup: balance (cache) + bút toán (sổ cái) ghi trong CÙNG transaction — cùng commit/rollback.
+     * Dedup đã do {@code idempotencyService.reserveOrReplay} chặn TRƯỚC (reserve-key-FIRST), nên đây chỉ
+     * chạy khi FRESH. Vẫn dual-write inline {@code idempotencyKey} lên ledger (UNIQUE bỏ ở Task 5).
      * Chỉ còn dùng cho TOPUP (withdraw đã chuyển sang đường order-based, E1).
      */
-    private WalletTransaction applyMoneyOperation(Long walletId, String userId, BigDecimal amount,
-                                                  String idempotencyKey, WalletTransaction.Type type) {
-        validateKeyAndAmount(idempotencyKey, amount);
-        var existing = walletRepository.findTransactionByIdempotencyKey(idempotencyKey);
-        if (existing.isPresent()) {
-            var tx = existing.get();
-            requireMatchingTransaction(tx, walletId, type, amount);
-            return tx; // true retry -> không áp lần hai
-        }
+    private WalletTransaction applyTopup(Long walletId, String userId, BigDecimal amount,
+                                         String idempotencyKey, WalletTransaction.Type type) {
         Wallet wallet = getWallet(walletId, userId);
         wallet.topup(amount);
         Wallet saved = walletRepository.save(wallet);
@@ -261,14 +281,33 @@ public class WalletService {
         return executeTransferWithRecovery(fromId, toId, caller, amount, idempotencyKey);
     }
 
+    /**
+     * SP7 Bước 1 Task 3: dedup của transfer giờ enforce qua {@code idempotency_record} (reserve-key-FIRST),
+     * trong CÙNG transaction nghiệp vụ. Fingerprint gồm (from, to, amount) → same-key-diff-receiver/amount
+     * lệch fingerprint → 409. FRESH → chuyển tiền → dual-write inline key lên chân OUT → complete(key,
+     * transferId). REPLAY → nạp lại transfer winner qua inline key → khớp payload (recovery, gồm receiver)
+     * → trả CŨ. Race loser fail INSERT record (DIVE) → recovery trong reserveOrReplay (winner rollback →
+     * rethrow → 409). Tiền KHÔNG chuyển hai lần.
+     */
     private TransferResult executeTransferWithRecovery(Long fromId, Long toId, String caller,
                                                        BigDecimal amount, String idempotencyKey) {
+        String opType = WalletTransaction.Type.TRANSFER_OUT.name();
+        String fingerprint = idempotencyService.fingerprintOf(
+                opType, String.valueOf(fromId), String.valueOf(toId), amount.toPlainString());
         try {
-            return txTemplate.execute(status -> applyTransfer(fromId, toId, caller, amount, idempotencyKey));
-        } catch (DataIntegrityViolationException e) {
+            return txTemplate.execute(status -> {
+                idempotencyService.reserve(idempotencyKey, opType, fingerprint); // DIVE nếu trùng -> rollback
+                TransferResult result = applyTransfer(fromId, toId, caller, amount, idempotencyKey);
+                idempotencyService.complete(idempotencyKey, result.transferId()); // result_ref = transferId
+                return result;
+            });
+        } catch (DataIntegrityViolationException dive) {
+            // Tx thất bại đã thoát -> recovery ở tx MỚI. fingerprint khớp (gồm receiver) -> trả transfer CŨ;
+            // lệch hoặc winner rollback -> 409 (recover ném IdempotencyKeyConflictException / rethrow DIVE).
+            idempotencyService.recover(idempotencyKey, fingerprint, dive);
             WalletTransaction winner = walletRepository.findTransactionByIdempotencyKey(idempotencyKey)
-                    .orElseThrow(() -> e); // winner cũng rollback -> rethrow -> handler map 409
-            return replayTransfer(winner, fromId, toId, amount);
+                    .orElseThrow(() -> new TransferIdempotencyConflictException(idempotencyKey));
+            return replayTransfer(winner, fromId, toId, amount); // trả CŨ, không chuyển lần hai
         }
     }
 
@@ -302,11 +341,7 @@ public class WalletService {
      */
     private TransferResult applyTransfer(Long fromId, Long toId, String caller,
                                          BigDecimal amount, String idempotencyKey) {
-        validateKeyAndAmount(idempotencyKey, amount);
-        var existing = walletRepository.findTransactionByIdempotencyKey(idempotencyKey);
-        if (existing.isPresent()) {                                    // true retry trong tx -> KHÔNG chuyển lần hai
-            return replayTransfer(existing.get(), fromId, toId, amount);
-        }
+        // Dedup đã do reserveOrReplay chặn TRƯỚC (reserve-key-FIRST) — đây chỉ chạy khi FRESH.
         // Lock-ordering: nạp/khóa hai ví theo id tăng dần — dễ suy luận, phòng deadlock nếu sau dùng pessimistic.
         Wallet from;
         Wallet to;

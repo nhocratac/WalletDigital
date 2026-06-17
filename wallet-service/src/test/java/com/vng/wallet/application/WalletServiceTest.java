@@ -12,7 +12,11 @@ import com.vng.wallet.domain.WalletTransaction;
 import com.vng.wallet.domain.WithdrawalOrder;
 import com.vng.wallet.domain.WithdrawalOrderRepository;
 import com.vng.wallet.domain.WithdrawalState;
+import com.vng.wallet.idempotency.IdempotencyRecord;
+import com.vng.wallet.idempotency.IdempotencyService;
+import com.vng.wallet.idempotency.IdempotencyStore;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.AbstractPlatformTransactionManager;
 import org.springframework.transaction.support.DefaultTransactionStatus;
@@ -161,6 +165,37 @@ class WalletServiceTest {
         @Override protected void doRollback(DefaultTransactionStatus status) {}
     }
 
+    /**
+     * Fake idempotency store in-memory — save() là INSERT thuần (trùng key → DIVE) mô phỏng UNIQUE PK
+     * của {@code idempotency_record}, để chứng minh topup/transfer giờ enforce dedup QUA bảng record
+     * (SP7 Task 3) chứ không qua pre-check ledger.
+     */
+    static final class InMemoryIdempotencyStore implements IdempotencyStore {
+        final Map<String, IdempotencyRecord> rows = new HashMap<>();
+
+        @Override
+        public Optional<IdempotencyRecord> find(String idempotencyKey) {
+            return Optional.ofNullable(rows.get(idempotencyKey));
+        }
+
+        @Override
+        public IdempotencyRecord save(IdempotencyRecord record) {
+            if (rows.containsKey(record.idempotencyKey())) {
+                throw new DataIntegrityViolationException("duplicate key " + record.idempotencyKey());
+            }
+            rows.put(record.idempotencyKey(), record);
+            return record;
+        }
+
+        @Override
+        public void updateResultRef(String idempotencyKey, String resultRef) {
+            IdempotencyRecord r = rows.get(idempotencyKey);
+            if (r == null) return;
+            rows.put(idempotencyKey, new IdempotencyRecord(
+                    r.idempotencyKey(), r.operationType(), r.requestFingerprint(), resultRef, r.createdAt()));
+        }
+    }
+
     /** Fake gate điều khiển được — đếm số lần gọi để chốt hợp đồng "replay không đụng gate". */
     static class FakeKycGate implements KycGate {
         KycCheckResult next = new KycCheckResult(Decision.ALLOWED, "APPROVED");
@@ -176,9 +211,11 @@ class WalletServiceTest {
     }
 
     private final FakeKycGate gate = new FakeKycGate();
+    private final InMemoryIdempotencyStore idemStore = new InMemoryIdempotencyStore();
     private final WalletService service = new WalletService(
             new InMemoryWalletRepository(), new InMemoryWithdrawalOrderRepository(),
-            new TransactionTemplate(new NoopTransactionManager()), gate);
+            new TransactionTemplate(new NoopTransactionManager()), gate,
+            new IdempotencyService(idemStore));
 
     @Test
     void createWallet_savesWithZeroBalanceAndId() {
@@ -433,6 +470,59 @@ class WalletServiceTest {
         assertNull(in.idempotencyKey(), "IN leg has NULL key");
         assertEquals(out.transferId(), in.transferId(), "shared transferId");
         assertEquals(result.transferId(), out.transferId());
+    }
+
+    // ───────────── SP7 Task 3 — dedup enforce QUA idempotency_record (dual-write) ─────────────
+
+    @Test
+    void topup_enforcesDedupViaIdempotencyRecord_andDualWritesLedger() {
+        Wallet w = service.createWallet("user-1", "Alice");
+
+        WalletTransaction tx = service.topup(w.getId(), "user-1", new BigDecimal("50.00"), "rec-topup");
+
+        // (a) record được claim trong idempotency_record với result_ref = txId (switch-read source)
+        IdempotencyRecord rec = idemStore.find("rec-topup").orElseThrow();
+        assertEquals("TOPUP", rec.operationType());
+        assertEquals(String.valueOf(tx.id()), rec.resultRef(), "result_ref trỏ txId của bút toán");
+        // (b) dual-write: inline key vẫn ghi lên ledger (chưa bỏ UNIQUE — Task 5)
+        assertEquals("rec-topup", tx.idempotencyKey(), "inline key dual-written lên ledger");
+    }
+
+    @Test
+    void topup_replayEnforcedByRecord_appliesOnce() {
+        Wallet w = service.createWallet("user-1", "Alice");
+        WalletTransaction first = service.topup(w.getId(), "user-1", new BigDecimal("50.00"), "rec-dup");
+
+        WalletTransaction second = service.topup(w.getId(), "user-1", new BigDecimal("50.00"), "rec-dup");
+
+        assertEquals(first.id(), second.id(), "replay trả bút toán CŨ (enforce qua record)");
+        assertEquals(0, new BigDecimal("50.00").compareTo(service.getWallet(w.getId(), "user-1").getBalance()),
+                "tiền chỉ cộng MỘT lần");
+        assertEquals(1, idemStore.rows.size(), "chỉ MỘT record cho key dùng lại");
+    }
+
+    @Test
+    void topup_sameKeyDifferentAmount_throws409ViaRecordFingerprint() {
+        Wallet w = service.createWallet("user-1", "Alice");
+        service.topup(w.getId(), "user-1", new BigDecimal("50.00"), "rec-mix");
+
+        assertThrows(IdempotencyKeyConflictException.class,
+                () -> service.topup(w.getId(), "user-1", new BigDecimal("60.00"), "rec-mix"));
+        assertEquals(0, new BigDecimal("50.00").compareTo(service.getWallet(w.getId(), "user-1").getBalance()),
+                "payload lệch -> tiền KHÔNG đổi");
+    }
+
+    @Test
+    void transfer_enforcesDedupViaIdempotencyRecord() {
+        Wallet from = seedWallet("user-A", "Alice", "fA", new BigDecimal("100.00"));
+        Wallet to = seedWallet("user-B", "Bob", "fB", new BigDecimal("0.00"));
+
+        WalletService.TransferResult result =
+                service.transfer(from.getId(), to.getId(), "user-A", new BigDecimal("30.00"), "rec-tk");
+
+        IdempotencyRecord rec = idemStore.find("rec-tk").orElseThrow();
+        assertEquals("TRANSFER_OUT", rec.operationType());
+        assertEquals(result.transferId(), rec.resultRef(), "result_ref = transferId");
     }
 
     @Test
