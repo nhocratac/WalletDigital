@@ -61,16 +61,16 @@ class FlywaySchemaIntegrationTest {
     void flywayMigratedSp4SchemaToLatestVersion() {
         Integer applied = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM flyway_schema_history WHERE success = 1", Integer.class);
-        assertTrue(applied != null && applied >= 4, "Flyway should have applied V1..V4, got " + applied);
+        assertTrue(applied != null && applied >= 5, "Flyway should have applied V1..V5, got " + applied);
 
         String latest = jdbc.queryForObject(
                 "SELECT version FROM flyway_schema_history WHERE success = 1 "
                         + "ORDER BY installed_rank DESC LIMIT 1", String.class);
-        assertEquals("4", latest, "latest applied migration should be V4");
+        assertEquals("5", latest, "latest applied migration should be V5");
 
         // tables exist (Flyway created them — hibernate ddl-auto=none did NOT).
         // Just prove they are queryable; row count is irrelevant (shared container, no rollback).
-        for (String table : new String[]{"wallet", "wallet_transaction", "withdrawal_order"}) {
+        for (String table : new String[]{"wallet", "wallet_transaction", "withdrawal_order", "idempotency_record"}) {
             Integer rows = jdbc.queryForObject("SELECT COUNT(*) FROM " + table, Integer.class);
             assertTrue(rows != null && rows >= 0, table + " exists and is queryable");
         }

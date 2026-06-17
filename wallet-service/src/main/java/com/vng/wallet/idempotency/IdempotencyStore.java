@@ -1,0 +1,27 @@
+package com.vng.wallet.idempotency;
+
+import java.util.Optional;
+
+/**
+ * PORT — kho idempotency_record (SP7 Bước 1, L2). Định nghĩa bởi tầng nghiệp vụ; KHÔNG nói gì về
+ * JPA/SQL. Adapter ở infrastructure cài đặt, routed per-tenant-schema như mọi repo khác (SP5).
+ *
+ * <p>Reserve-key-FIRST: {@link #save} claim key qua UNIQUE — trùng key ném
+ * {@link org.springframework.dao.DataIntegrityViolationException} (race loser fail INSERT, tiền
+ * KHÔNG bao giờ chuyển hai lần). {@link #find} đọc record để recovery (fingerprint khớp → replay;
+ * lệch → 409). {@link #updateResultRef} ghi kết quả SAU khi money op xong.
+ */
+public interface IdempotencyStore {
+
+    /** Đọc record theo key (recovery/replay). Empty nếu chưa claim (vd winner đã rollback). */
+    Optional<IdempotencyRecord> find(String idempotencyKey);
+
+    /**
+     * Claim key (INSERT). Trùng key → {@link org.springframework.dao.DataIntegrityViolationException}.
+     * Gọi TRONG transaction nghiệp vụ, TRƯỚC khi chuyển tiền.
+     */
+    IdempotencyRecord save(IdempotencyRecord record);
+
+    /** Ghi result_ref SAU khi money op xong (txId/orderId/transferId) để replay trả đúng cái cũ. */
+    void updateResultRef(String idempotencyKey, String resultRef);
+}
