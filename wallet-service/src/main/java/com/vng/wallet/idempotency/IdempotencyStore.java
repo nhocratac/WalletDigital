@@ -1,5 +1,6 @@
 package com.vng.wallet.idempotency;
 
+import java.time.Instant;
 import java.util.Optional;
 
 /**
@@ -24,4 +25,11 @@ public interface IdempotencyStore {
 
     /** Ghi result_ref SAU khi money op xong (txId/orderId/transferId) để replay trả đúng cái cũ. */
     void updateResultRef(String idempotencyKey, String resultRef);
+
+    /**
+     * TTL purge (SP7 Task 6): xoá mọi record có {@code created_at} CŨ HƠN {@code cutoff} TRONG schema
+     * tenant hiện tại (routed như mọi op khác). Trả về số record đã xoá. Bảng record KHÔNG phình vì
+     * key replay-able đã quá hạn TTL (client sẽ không retry sau hàng ngày).
+     */
+    int deleteOlderThan(Instant cutoff);
 }

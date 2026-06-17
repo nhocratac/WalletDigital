@@ -194,6 +194,13 @@ class WalletServiceTest {
             rows.put(idempotencyKey, new IdempotencyRecord(
                     r.idempotencyKey(), r.operationType(), r.requestFingerprint(), resultRef, r.createdAt()));
         }
+
+        @Override
+        public int deleteOlderThan(java.time.Instant cutoff) {
+            int before = rows.size();
+            rows.values().removeIf(r -> r.createdAt().isBefore(cutoff));
+            return before - rows.size();
+        }
     }
 
     /** Fake gate điều khiển được — đếm số lần gọi để chốt hợp đồng "replay không đụng gate". */

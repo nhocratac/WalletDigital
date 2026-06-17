@@ -176,6 +176,13 @@ class WalletControllerTest {
                     rows.put(idempotencyKey, new com.vng.wallet.idempotency.IdempotencyRecord(
                             r.idempotencyKey(), r.operationType(), r.requestFingerprint(), resultRef, r.createdAt()));
                 }
+
+                @Override
+                public int deleteOlderThan(java.time.Instant cutoff) {
+                    int before = rows.size();
+                    rows.values().removeIf(r -> r.createdAt().isBefore(cutoff));
+                    return before - rows.size();
+                }
             };
         }
 

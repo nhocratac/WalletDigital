@@ -69,6 +69,24 @@ class JpaIdempotencyStoreTest {
     }
 
     @Test
+    void deleteOlderThan_purgesExpiredKeepsFresh() {
+        Instant cutoff = Instant.parse("2026-06-17T00:00:00Z");
+        // 2 record CŨ hơn cutoff (phải xoá) + 1 record MỚI hơn (phải giữ).
+        store.save(new IdempotencyRecord("old-1", "TOPUP", "fp-o1", null, cutoff.minusSeconds(86400)));
+        store.save(new IdempotencyRecord("old-2", "WITHDRAW", "fp-o2", null, cutoff.minusSeconds(1)));
+        store.save(new IdempotencyRecord("fresh-1", "TRANSFER", "fp-f1", null, cutoff.plusSeconds(1)));
+        em.flush(); em.clear();
+
+        int purged = store.deleteOlderThan(cutoff);
+        em.flush(); em.clear();
+
+        assertEquals(2, purged, "hai record cũ hơn cutoff bị xoá");
+        assertTrue(store.find("old-1").isEmpty(), "record cũ bị purge");
+        assertTrue(store.find("old-2").isEmpty(), "record cũ bị purge");
+        assertTrue(store.find("fresh-1").isPresent(), "record mới hơn TTL được giữ");
+    }
+
+    @Test
     void updateResultRef_setsResultAfterOpCompletes() {
         store.save(new IdempotencyRecord("key-c", "TRANSFER", "fp-c", null, Instant.now()));
         em.flush(); em.clear();

@@ -51,6 +51,13 @@ class IdempotencyServiceTest {
             rows.put(idempotencyKey, new IdempotencyRecord(
                     r.idempotencyKey(), r.operationType(), r.requestFingerprint(), resultRef, r.createdAt()));
         }
+
+        @Override
+        public int deleteOlderThan(java.time.Instant cutoff) {
+            int before = rows.size();
+            rows.values().removeIf(r -> r.createdAt().isBefore(cutoff));
+            return before - rows.size();
+        }
     }
 
     private final FakeStore store = new FakeStore();

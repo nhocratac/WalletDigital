@@ -7,6 +7,7 @@ import jakarta.persistence.PersistenceContext;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.Optional;
 
 /**
@@ -56,5 +57,11 @@ public class JpaIdempotencyStore implements IdempotencyStore {
                 existing.getRequestFingerprint(),
                 resultRef,
                 existing.getCreatedAt()));
+    }
+
+    @Override
+    @Transactional
+    public int deleteOlderThan(Instant cutoff) {
+        return jpa.deleteByCreatedAtBefore(cutoff);  // bulk DELETE trong schema tenant hiện tại (routed)
     }
 }
