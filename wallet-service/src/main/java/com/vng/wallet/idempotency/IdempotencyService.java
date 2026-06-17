@@ -100,6 +100,14 @@ public class IdempotencyService {
         }
     }
 
+    /**
+     * Đọc record theo key — dùng cho replay pre-check NGOÀI transaction (vd withdraw phải replay
+     * TRƯỚC cổng KYC, D4). Empty nếu key chưa được claim.
+     */
+    public java.util.Optional<IdempotencyRecord> find(String idempotencyKey) {
+        return store.find(idempotencyKey);
+    }
+
     /** Ghi result_ref SAU khi money op xong (txId/orderId/transferId) để replay trả đúng cái cũ. */
     public void complete(String idempotencyKey, String resultRef) {
         store.updateResultRef(idempotencyKey, resultRef);

@@ -85,10 +85,12 @@ public class WalletService {
      */
     public WithdrawalOrder withdraw(Long walletId, String userId, BigDecimal amount, String idempotencyKey) {
         validateKeyAndAmount(idempotencyKey, amount); // các check review Stage 2 — giữ nguyên, gọi trước
-        var existing = withdrawalOrderRepository.findByIdempotencyKey(idempotencyKey);
-        if (existing.isPresent()) {                    // [0] replay -> order cũ, KHÔNG đụng gate, KHÔNG hold lần 2
-            requireMatchingOrder(existing.get(), walletId, amount);
-            return existing.get();
+        // [0] replay (NGOÀI tx, TRƯỚC gate): enforce qua idempotency_record (SP7 Task 4). Record đã có
+        // (fingerprint khớp) -> trả order CŨ qua result_ref, KHÔNG đụng gate, KHÔNG hold lần 2; lệch -> 409.
+        String fingerprint = withdrawFingerprint(walletId, amount);
+        var replay = replayWithdrawIfRecorded(idempotencyKey, fingerprint);
+        if (replay != null) {
+            return replay;
         }
         KycGate.KycCheckResult kyc = kycGate.check(userId);          // [2] NGOÀI transaction (D4)
         switch (kyc.decision()) {
@@ -96,7 +98,7 @@ public class WalletService {
             case UNAVAILABLE -> throw new KycUnavailableException();
             case ALLOWED -> { /* qua cổng */ }
         }
-        return executeWithdrawWithRecovery(walletId, userId, amount, idempotencyKey);
+        return executeWithdrawWithRecovery(walletId, userId, amount, idempotencyKey, fingerprint);
     }
 
     /** Poll trạng thái lệnh rút — scoped theo chủ sở hữu (D2): order người khác -> 404. */
@@ -203,26 +205,57 @@ public class WalletService {
      * sau khi tx thua thoát, đọc lại order người thắng -> khớp payload -> trả; người thắng cũng
      * rollback -> rethrow DIVE -> handler map 409.
      */
+    private static final String OP_WITHDRAW = "WITHDRAW";
+
+    /** Fingerprint của withdraw payload (opType, walletId, amount) — phát hiện same-key-diff-payload -> 409. */
+    private String withdrawFingerprint(Long walletId, BigDecimal amount) {
+        return idempotencyService.fingerprintOf(OP_WITHDRAW, String.valueOf(walletId), amount.toPlainString());
+    }
+
+    /**
+     * Replay withdraw qua idempotency_record (NGOÀI tx, dùng cho pre-check TRƯỚC gate lẫn recovery của
+     * race loser). Record chưa có -> trả {@code null} (caller chạy money op). Record có:
+     * fingerprint khớp -> nạp lại order winner qua inline key (dual-write còn tới Task 5) -> trả CŨ;
+     * fingerprint lệch -> {@link IdempotencyKeyConflictException} (409).
+     */
+    private WithdrawalOrder replayWithdrawIfRecorded(String idempotencyKey, String fingerprint) {
+        var record = idempotencyService.find(idempotencyKey);
+        if (record.isEmpty()) {
+            return null;
+        }
+        if (!record.get().requestFingerprint().equals(fingerprint)) {
+            throw new IdempotencyKeyConflictException(idempotencyKey); // same-key-diff-payload -> 409
+        }
+        return withdrawalOrderRepository.findByIdempotencyKey(idempotencyKey)
+                .orElseThrow(() -> new IdempotencyKeyConflictException(idempotencyKey)); // winner chưa dual-write -> 409
+    }
+
+    /**
+     * SP7 Bước 1 Task 4: dedup của withdraw giờ enforce qua {@code idempotency_record} (reserve-key-FIRST),
+     * trong CÙNG transaction nghiệp vụ. FRESH -> claim record -> tạo order + escrow + ledger WITHDRAW_HOLD
+     * -> dual-write inline key lên order (chưa bỏ UNIQUE — Task 5) -> {@code complete(key, orderId)}.
+     * Race loser fail INSERT record (DIVE) -> recovery NGOÀI tx hỏng: fingerprint khớp -> trả order CŨ;
+     * lệch hoặc winner rollback -> 409. Escrow/settle KHÔNG đổi; tiền KHÔNG hold hai lần.
+     */
     private WithdrawalOrder executeWithdrawWithRecovery(Long walletId, String userId, BigDecimal amount,
-                                                        String idempotencyKey) {
+                                                        String idempotencyKey, String fingerprint) {
         try {
-            return txTemplate.execute(status -> applyWithdrawHold(walletId, userId, amount, idempotencyKey));
-        } catch (DataIntegrityViolationException e) {
-            WithdrawalOrder winner = withdrawalOrderRepository.findByIdempotencyKey(idempotencyKey)
-                    .orElseThrow(() -> e); // winner rolled back -> rethrow -> 409
-            requireMatchingOrder(winner, walletId, amount);
-            return winner;
+            return txTemplate.execute(status -> {
+                idempotencyService.reserve(idempotencyKey, OP_WITHDRAW, fingerprint); // DIVE nếu trùng -> rollback
+                WithdrawalOrder order = applyWithdrawHold(walletId, userId, amount, idempotencyKey);
+                idempotencyService.complete(idempotencyKey, String.valueOf(order.getId())); // result_ref = orderId
+                return order;
+            });
+        } catch (DataIntegrityViolationException dive) {
+            // Tx hỏng đã thoát -> recovery read ở tx MỚI. fingerprint khớp -> trả order CŨ; lệch/winner
+            // rollback -> 409. recover() ném (đọc record); nếu record chưa có (winner rollback) rethrow DIVE.
+            idempotencyService.recover(idempotencyKey, fingerprint, dive);
+            return withdrawalOrderRepository.findByIdempotencyKey(idempotencyKey)
+                    .orElseThrow(() -> dive); // winner rollback / chưa dual-write -> rethrow -> 409
         }
     }
 
     private WithdrawalOrder applyWithdrawHold(Long walletId, String userId, BigDecimal amount, String idempotencyKey) {
-        validateKeyAndAmount(idempotencyKey, amount);
-        var existing = withdrawalOrderRepository.findByIdempotencyKey(idempotencyKey);
-        if (existing.isPresent()) {
-            var order = existing.get();
-            requireMatchingOrder(order, walletId, amount);
-            return order; // true retry -> không hold lần hai
-        }
         Wallet wallet = getWallet(walletId, userId);
         wallet.reserve(amount); // available -= amount; có thể ném InsufficientFunds -> rollback, không ghi gì
         walletRepository.save(wallet);
@@ -237,13 +270,6 @@ public class WalletService {
                 null, walletId, WalletTransaction.Type.WITHDRAW_HOLD, amount, idempotencyKey,
                 wallet.getBalance(), Instant.now()));
         return saved;
-    }
-
-    /** Quy tắc khớp payload cho Idempotency-Key của order — pre-check lẫn recovery. */
-    private static void requireMatchingOrder(WithdrawalOrder order, Long walletId, BigDecimal amount) {
-        if (!order.getWalletId().equals(walletId) || order.getAmount().compareTo(amount) != 0) {
-            throw new IdempotencyKeyConflictException(order.getIdempotencyKey());
-        }
     }
 
     // ───────────────────────────── SP6 — internal transfer (TR1–TR7) ─────────────────────────────

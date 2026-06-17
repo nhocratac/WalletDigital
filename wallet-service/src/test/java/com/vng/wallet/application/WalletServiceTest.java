@@ -513,6 +513,50 @@ class WalletServiceTest {
     }
 
     @Test
+    void withdraw_enforcesDedupViaIdempotencyRecord_andDualWritesOrder() {
+        Wallet w = service.createWallet("user-1", "Bob");
+        service.topup(w.getId(), "user-1", new BigDecimal("100.00"), "rec-wfund");
+
+        WithdrawalOrder order = service.withdraw(w.getId(), "user-1", new BigDecimal("30.00"), "rec-withdraw");
+
+        // (a) record claimed in idempotency_record with result_ref = orderId (switch-read source)
+        IdempotencyRecord rec = idemStore.find("rec-withdraw").orElseThrow();
+        assertEquals("WITHDRAW", rec.operationType());
+        assertEquals(String.valueOf(order.getId()), rec.resultRef(), "result_ref trỏ orderId");
+        // (b) dual-write: order vẫn mang inline key (chưa bỏ UNIQUE — Task 5)
+        assertEquals("rec-withdraw", order.getIdempotencyKey(), "inline key dual-written lên order");
+    }
+
+    @Test
+    void withdraw_replayEnforcedByRecord_holdsOnce() {
+        Wallet w = service.createWallet("user-1", "Bob");
+        service.topup(w.getId(), "user-1", new BigDecimal("100.00"), "rec-wsetup");
+        WithdrawalOrder first = service.withdraw(w.getId(), "user-1", new BigDecimal("30.00"), "rec-wdup");
+
+        WithdrawalOrder second = service.withdraw(w.getId(), "user-1", new BigDecimal("30.00"), "rec-wdup");
+
+        assertEquals(first.getId(), second.getId(), "replay trả order CŨ (enforce qua record)");
+        Wallet after = service.getWallet(w.getId(), "user-1");
+        assertEquals(0, new BigDecimal("30.00").compareTo(after.getHeld()), "held chỉ tăng MỘT lần");
+        assertEquals(0, new BigDecimal("70.00").compareTo(after.available()));
+        assertEquals(2, service.listTransactions(w.getId(), "user-1").size(), "1 topup + 1 WITHDRAW_HOLD");
+        // chỉ MỘT record cho key dùng lại (cộng record của topup seed)
+        assertTrue(idemStore.find("rec-wdup").isPresent());
+    }
+
+    @Test
+    void withdraw_sameKeyDifferentAmount_throws409ViaRecordFingerprint() {
+        Wallet w = service.createWallet("user-1", "Bob");
+        service.topup(w.getId(), "user-1", new BigDecimal("100.00"), "rec-wmixfund");
+        service.withdraw(w.getId(), "user-1", new BigDecimal("20.00"), "rec-wmix");
+
+        assertThrows(IdempotencyKeyConflictException.class,
+                () -> service.withdraw(w.getId(), "user-1", new BigDecimal("25.00"), "rec-wmix"));
+        Wallet after = service.getWallet(w.getId(), "user-1");
+        assertEquals(0, new BigDecimal("20.00").compareTo(after.getHeld()), "payload lệch -> held KHÔNG đổi");
+    }
+
+    @Test
     void transfer_enforcesDedupViaIdempotencyRecord() {
         Wallet from = seedWallet("user-A", "Alice", "fA", new BigDecimal("100.00"));
         Wallet to = seedWallet("user-B", "Bob", "fB", new BigDecimal("0.00"));
