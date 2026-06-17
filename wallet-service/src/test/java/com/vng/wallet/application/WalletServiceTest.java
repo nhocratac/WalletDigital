@@ -631,6 +631,32 @@ class WalletServiceTest {
         assertEquals(0, new BigDecimal("30.00").compareTo(service.getWallet(to.getId(), "user-B").getBalance()));
     }
 
+    /**
+     * SP7 Task 3 review fix — CONCURRENT same-key-different-payload transfer (the race loser).
+     * The sequential pre-check in transfer() does not fire because the winner hasn't dual-written
+     * the ledger yet, so the loser reaches executeTransferWithRecovery: reserve() hits the already
+     * claimed idempotency_record (DIVE) and recover() sees a fingerprint mismatch. The transfer
+     * error contract requires 409 — i.e. the transfer-specific TransferIdempotencyConflictException,
+     * NOT the base IdempotencyKeyConflictException (which the web layer maps to 422).
+     */
+    @Test
+    void transfer_concurrentSameKeyDifferentPayload_throwsTransferConflict_for409() {
+        Wallet from = seedWallet("user-A", "Alice", "fA", new BigDecimal("100.00"));
+        Wallet to = seedWallet("user-B", "Bob", "fB", new BigDecimal("0.00"));
+        // Simulate the race winner having claimed the key (record present) for a DIFFERENT payload
+        // (amount 30.00), but not yet dual-written the ledger — so the pre-check finds no transaction.
+        String winnerFingerprint = new IdempotencyService(idemStore).fingerprintOf(
+                WalletTransaction.Type.TRANSFER_OUT.name(),
+                String.valueOf(from.getId()), String.valueOf(to.getId()), "30.00");
+        idemStore.rows.put("tk-race", new IdempotencyRecord(
+                "tk-race", WalletTransaction.Type.TRANSFER_OUT.name(), winnerFingerprint, null,
+                java.time.Instant.now()));
+
+        // Loser arrives with the SAME key but a DIFFERENT amount (40.00) -> fingerprint mismatch.
+        assertThrows(com.vng.wallet.domain.TransferIdempotencyConflictException.class,
+                () -> service.transfer(from.getId(), to.getId(), "user-A", new BigDecimal("40.00"), "tk-race"));
+    }
+
     @Test
     void transfer_senderNotOwnedByCaller_throws404() {
         Wallet from = seedWallet("user-A", "Alice", "fA", new BigDecimal("100.00"));

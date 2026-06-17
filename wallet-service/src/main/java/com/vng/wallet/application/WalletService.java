@@ -303,8 +303,14 @@ public class WalletService {
             });
         } catch (DataIntegrityViolationException dive) {
             // Tx thất bại đã thoát -> recovery ở tx MỚI. fingerprint khớp (gồm receiver) -> trả transfer CŨ;
-            // lệch hoặc winner rollback -> 409 (recover ném IdempotencyKeyConflictException / rethrow DIVE).
-            idempotencyService.recover(idempotencyKey, fingerprint, dive);
+            // lệch hoặc winner rollback -> 409. recover() ném base IdempotencyKeyConflictException (map 422)
+            // cho fingerprint lệch — trên đường transfer phải là TransferIdempotencyConflictException (map
+            // 409) để giữ error-contract SP6 cả ở đường đua đồng thời (loser), không chỉ ở pre-check tuần tự.
+            try {
+                idempotencyService.recover(idempotencyKey, fingerprint, dive);
+            } catch (IdempotencyKeyConflictException conflict) {
+                throw new TransferIdempotencyConflictException(idempotencyKey);
+            }
             WalletTransaction winner = walletRepository.findTransactionByIdempotencyKey(idempotencyKey)
                     .orElseThrow(() -> new TransferIdempotencyConflictException(idempotencyKey));
             return replayTransfer(winner, fromId, toId, amount); // trả CŨ, không chuyển lần hai
