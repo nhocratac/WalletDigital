@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SP7 — Ledger at Scale</title>
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: true, theme: 'dark', sequence: { showSequenceNumbers: true } });
+</script>
+<style>
+  :root{--bg:#0f1117;--card:#171a21;--ink:#e6e6e6;--muted:#9aa4b2;--accent:#7c9cff;--accent2:#5be7c4;--line:#2a2f3a;--yellow:#ffd166;--red:#ff8a8a;--green:#5be7c4;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;line-height:1.6;font-size:16px;}
+  .wrap{max-width:1040px;margin:0 auto;padding:44px 24px 96px}
+  header.hero{background:linear-gradient(135deg,#1b2030,#11141c);border:1px solid var(--line);border-radius:16px;padding:30px;margin-bottom:28px;}
+  header.hero h1{margin:0 0 8px;font-size:28px}
+  .meta{color:var(--muted);font-size:14px;margin-top:10px}
+  h2{margin:40px 0 6px;font-size:21px;padding-bottom:8px;border-bottom:1px solid var(--line);color:#fff;}
+  h2 .num{color:var(--accent);margin-right:8px}
+  p.lead{color:var(--muted);margin:6px 0 14px}
+  .diagram{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin:14px 0;overflow-x:auto}
+  .mermaid{display:flex;justify-content:center}
+  blockquote{margin:14px 0;padding:12px 16px;border-left:4px solid var(--yellow);background:rgba(255,209,102,.08);border-radius:0 10px 10px 0;color:#cfd6e4;}
+  blockquote strong{color:var(--yellow)}
+  blockquote.danger{border-left-color:var(--red);background:rgba(255,138,138,.08)} blockquote.danger strong{color:var(--red)}
+  code{background:rgba(255,255,255,.07);padding:2px 6px;border-radius:5px;font-size:13.5px;font-family:"SF Mono",Menlo,Consolas,monospace;color:var(--accent2)}
+  table{border-collapse:collapse;width:100%;margin:14px 0;font-size:14px}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:rgba(124,156,255,.12);color:#fff}
+  a{color:var(--accent)}
+  .tag{display:inline-block;border-radius:999px;padding:1px 8px;font-size:12px;font-weight:600}
+  .hi{background:rgba(91,231,196,.15);color:var(--green);border:1px solid rgba(91,231,196,.35)}
+  .md{background:rgba(255,209,102,.13);color:var(--yellow);border:1px solid rgba(255,209,102,.3)}
+  .op{background:rgba(255,138,138,.12);color:var(--red);border:1px solid rgba(255,138,138,.3)}
+  .toc{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 20px;columns:2;font-size:14px}
+  .toc a{text-decoration:none} .toc a:hover{text-decoration:underline}
+  footer{margin-top:48px;color:var(--muted);font-size:13px;text-align:center}
+  a.back{font-size:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <p><a class="back" href="../../../index.html">← Về trang chủ tài liệu</a></p>
+
+  <header class="hero">
+    <h1>📈 SP7 — Ledger at Scale</h1>
+    <div class="meta">📅 2026-06-17 · sổ cái phình hàng trăm triệu dòng: tách idempotency → partition → archival → OLTP/OLAP · forward-looking (YAGNI tới khi đo được)</div>
+    <div class="meta">Quyết định L1–L8 do người học suy ra (Socratic), <b>kiểm chứng bằng deep-research có trích dẫn</b> (Stripe · TigerBeetle · Modern Treasury · MySQL docs · Percona · Brandur). Mỗi mục ghi mức tin.</div>
+  </header>
+
+  <div class="toc">
+    <a href="#s1">1. Vấn đề: đọc analytics, không phải ghi</a><br>
+    <a href="#s2">2. Quyết định L1–L8 (kèm mức tin)</a><br>
+    <a href="#s3">3. Research đính chính 3 điểm</a><br>
+    <a href="#s4">4. Kiến trúc đích</a><br>
+    <a href="#s5">5. Thứ tự triển khai (staged)</a><br>
+    <a href="#s6">6. Nguồn (đã verify)</a>
+  </div>
+
+  <h2 id="s1"><span class="num">1.</span>Vấn đề: ghi vẫn nhanh, ĐỌC analytics mới đau</h2>
+  <p class="lead">Ledger append-only → ghi nhanh (append cuối, PK tăng dần). Vấn đề là report quét-gộp hàng trăm triệu dòng cạnh tranh traffic live.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+    W["ghi tiền (append-only)"] -->|nhanh ✓| L[("wallet_transaction\nphình vô hạn")]
+    R["report: SUM/GROUP\n100tr+ dòng"] -->|"cạnh tranh CPU/IO\nnếu chạy trên DB live"| L
+    R -.->|"giải: chạy ở NƠI KHÁC"| O[("OLAP warehouse")]
+  </pre></div>
+
+  <h2 id="s2"><span class="num">2.</span>Quyết định L1–L8</h2>
+  <table>
+    <tr><th>#</th><th>Quyết định</th><th>Tin</th><th>Nguồn / ghi chú</th></tr>
+    <tr><td>L1</td><td>Ledger append-only, bất biến, double-entry; balance DẪN XUẤT từ log (balance_after = snapshot-per-row)</td><td><span class="tag hi">Cao</span></td><td>Stripe · TigerBeetle · Modern Treasury</td></tr>
+    <tr><td>L2</td><td>Tách idempotency_key ra store RIÊNG, no-partition, TTL ngắn — TRƯỚC khi partition</td><td><span class="tag md">TB</span></td><td>Hệ quả luật MySQL + Stripe/Brandur; ⚠️ TigerBeetle dùng inline id (DB chuyên dụng, không partition SQL)</td></tr>
+    <tr><td>L3</td><td>RANGE-partition wallet_transaction theo created_at (tháng) — chỉ khi đo được</td><td><span class="tag hi">Cao</span></td><td>MySQL docs; ⚠️ luật: partition key ∈ MỌI unique key (err 1491); pruning cần query kèm created_at</td></tr>
+    <tr><td>L4</td><td>Archive bằng EXCHANGE PARTITION → bảng riêng RỒI mới DROP (không DROP trần)</td><td><span class="tag hi">Cao</span></td><td>MySQL partitioning-management (điểm research bổ sung)</td></tr>
+    <tr><td>L5</td><td>KHÔNG partition bảng bounded (withdrawal_order query theo state)</td><td><span class="tag hi">Cao</span></td><td>Percona: query thiếu partition key → quét hết → chậm hơn</td></tr>
+    <tr><td>L6</td><td>Tách OLTP↔OLAP: report trên warehouse columnar, nạp bằng batch ETL HOẶC CDC; rollup; không scan trên OLTP</td><td><span class="tag hi">Cao</span> / <span class="tag md">TB</span></td><td>Stripe/MT/Uber; ⚠️ CDC không phải mặc định — MT dùng batch</td></tr>
+    <tr><td>L7</td><td>PK: auto-increment đủ tốt; Snowflake/time-ID chỉ khi sharding</td><td><span class="tag md">TB</span></td><td>research HẠ CẤP Snowflake (không có claim sống sót)</td></tr>
+    <tr><td>L8</td><td>Per-tenant-schema: partition/idempotency/archival chạy fleet; per-tenant vs shared store để mở</td><td><span class="tag op">Mở</span></td><td>đụng SP5; chưa có consensus</td></tr>
+  </table>
+
+  <h2 id="s3"><span class="num">3.</span>Research đính chính (bản trực-giác ban đầu)</h2>
+  <blockquote class="danger"><strong>3 điểm bị sửa nhờ verify đối kháng:</strong>
+  <br>① <b>Bỏ con số "~100 tx/giây/account"</b> — claim BỊ BÁC (vote 1-2).
+  <br>② <b>Snowflake ID không bắt buộc</b> — không có claim sống sót; auto-increment vốn tốt cho single-node → chỉ dùng khi shard.
+  <br>③ <b>CDC không phải "the way"</b> — Modern Treasury dùng batch sync; CDC chỉ là một lựa chọn.
+  <br>④ <b>(bổ sung)</b> EXCHANGE PARTITION trước DROP — bước archive đúng (DROP trần = mất dữ liệu).</blockquote>
+
+  <h2 id="s4"><span class="num">4.</span>Kiến trúc đích</h2>
+  <div class="diagram"><pre class="mermaid">
+flowchart TB
+    LIVE["ghi tiền (live)"] --> OLTP
+    subgraph OLTP["OLTP — MySQL (per-tenant schema)"]
+        WT["wallet_transaction\nRANGE partition /tháng\n(KHÔNG còn UNIQUE idempotency_key)"]
+        IDEM["idempotency_record\nbảng RIÊNG · no-partition\nUNIQUE(key) toàn cục · TTL · purge"]
+        WO["withdrawal_order\nKHÔNG partition"]
+    end
+    WT -->|"EXCHANGE + DROP mảnh cũ"| COLD[("cold storage")]
+    OLTP -->|"batch ETL / CDC (Debezium→Kafka)"| OLAP
+    subgraph OLAP["OLAP — warehouse columnar"]
+        WH["BigQuery / ClickHouse / Snowflake"]
+        ROLL["rollup tables (doanh thu/ngày/tenant)"]
+    end
+    REPORT["report / analytics"] --> OLAP
+  </pre></div>
+  <blockquote><strong>Luồng idempotency mới (L2):</strong> trước khi ghi ledger → <code>INSERT idempotency_record(key)</code> (UNIQUE bắt trùng) → trùng thì replay; không thì ghi 2 bút toán double-entry vào ledger đã-sạch-constraint → partition được.</blockquote>
+
+  <h2 id="s5"><span class="num">5.</span>Thứ tự triển khai (staged — YAGNI)</h2>
+  <div class="diagram"><pre class="mermaid">
+flowchart TB
+    B0["Bước 0 — ĐO: kích thước bảng, p99 query, thời gian backup\n(chưa làm gì tới khi đau thật)"]
+    B0 --> B1["Bước 1 — Tách idempotency → idempotency_record (no-part, TTL)\nexpand/contract: dual-write → backfill → switch read → bỏ UNIQUE khỏi ledger\n(đáng làm SỚM, đúng dù lớn hay nhỏ)"]
+    B1 --> B2["Bước 2 — Partition wallet_transaction theo created_at\njob tạo/EXCHANGE/DROP mảnh — chạy cho MỌI tenant schema (fleet)"]
+    B2 --> B3["Bước 3 — Pipeline OLTP→OLAP (batch trước; CDC nếu cần realtime) + rollup\nreport chuyển sang OLAP"]
+    B3 --> B4["Bước 4 (nếu 1 máy không gánh nổi) — shard theo tenant/hash"]
+  </pre></div>
+  <blockquote><strong>YAGNI:</strong> tách idempotency (Bước 1) làm sớm; partition/OLAP để dành khi số liệu đòi. Partition sớm = thêm job fleet + bẫy "query thiếu partition key" (Percona).</blockquote>
+
+  <h2 id="s6"><span class="num">6.</span>Nguồn (deep-research, verify đối kháng)</h2>
+  <ul>
+    <li><a href="https://stripe.com/blog/ledger-stripe-system-for-tracking-and-validating-money-movement">Stripe — Ledger</a> (primary)</li>
+    <li><a href="https://docs.tigerbeetle.com/coding/data-modeling/">TigerBeetle — data modeling</a> (primary)</li>
+    <li><a href="https://www.moderntreasury.com/journal/how-to-scale-a-ledger-part-v">Modern Treasury — scaling a ledger</a> + <a href="https://www.moderntreasury.com/journal/accounting-for-developers-part-ii">Accounting for developers</a> (primary)</li>
+    <li><a href="https://dev.mysql.com/doc/refman/8.0/en/partitioning-limitations-partitioning-keys-unique-keys.html">MySQL — partitioning keys vs unique keys (err 1491)</a> · <a href="https://dev.mysql.com/doc/refman/8.0/en/partitioning-management.html">partition management</a> (primary)</li>
+    <li><a href="https://www.percona.com/blog/mysql-partitioning-can-save-you-or-kill-you/">Percona — partitioning can save you or kill you</a> (contrarian)</li>
+    <li><a href="https://brandur.org/idempotency-keys">Brandur Leach — idempotency keys (Stripe)</a></li>
+  </ul>
+  <blockquote><strong>Độ tin:</strong> ledger / MySQL-rule / OLTP-OLAP = <span class="tag hi">cao</span> (primary). Tách-idempotency-table = <span class="tag md">suy luận + Stripe hậu thuẫn</span> (phản ví dụ TigerBeetle inline). Snowflake & partition-vs-shard = <span class="tag op">không claim sống sót → để mở</span>.</blockquote>
+
+  <footer>SP7 Ledger at Scale · brainstorm Socratic + deep-research 2026-06-17 · bản chi tiết: <code>2026-06-17-sp7-ledger-at-scale-design.md</code></footer>
+</div>
+</body>
+</html>
