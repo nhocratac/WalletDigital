@@ -203,16 +203,23 @@ class JpaWalletRepositoryTest {
     }
 
     @Test
-    void duplicateIdempotencyKey_violatesDbConstraint() {
+    void duplicateIdempotencyKey_isAcceptedByLedger_afterV6DropUnique() {
+        // SP7 Bước 1 Task 5 (CONTRACT): V6 đã bỏ uk_wt_idempotency_key. Sổ cái SẠCH constraint trên
+        // idempotency_key -> hai bút toán cùng key KHÔNG còn bị DB chặn (drift CÓ CHỦ ĐÍCH: trước Task 5
+        // test này assert DIVE từ uk_wt_idempotency_key). Dedup nay enforce ở idempotency_record qua
+        // IdempotencyService/WalletService — KHÔNG phải ở ledger nữa -> ledger partitionable (SP7 Bước 2).
         Wallet w = repository.save(Wallet.createNew("user-1", "Bob"));
         repository.saveTransaction(new WalletTransaction(null, w.getId(),
                 WalletTransaction.Type.TOPUP, BigDecimal.ONE, "dup-key", BigDecimal.ONE, Instant.now()));
         em.flush(); // ghi bút toán đầu xuống DB trước
 
-        assertThrows(org.springframework.dao.DataIntegrityViolationException.class, () -> {
-            repository.saveTransaction(new WalletTransaction(null, w.getId(),
-                    WalletTransaction.Type.TOPUP, BigDecimal.ONE, "dup-key", BigDecimal.ONE, Instant.now()));
-            txJpa.flush(); // flush qua proxy Spring Data để có exception translation
-        });
+        // Bút toán thứ hai cùng key: với UNIQUE đã bỏ, INSERT thành công (không DIVE).
+        repository.saveTransaction(new WalletTransaction(null, w.getId(),
+                WalletTransaction.Type.TOPUP, BigDecimal.ONE, "dup-key", BigDecimal.ONE, Instant.now()));
+        txJpa.flush(); // flush qua proxy Spring Data — không còn ràng buộc UNIQUE để vi phạm
+        em.clear();
+
+        // Hai bút toán cùng "dup-key" cùng tồn tại trong sổ cái -> bằng chứng ledger hết UNIQUE.
+        assertEquals(2, txJpa.count(), "ledger giữ cả hai bút toán trùng key sau khi bỏ UNIQUE");
     }
 }

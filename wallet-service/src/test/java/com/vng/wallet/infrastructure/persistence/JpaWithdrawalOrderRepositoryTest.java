@@ -59,14 +59,19 @@ class JpaWithdrawalOrderRepositoryTest {
     }
 
     @Test
-    void duplicateIdempotencyKey_violatesDbConstraint() {
+    void duplicateIdempotencyKey_isAcceptedByLedger_afterV6DropUnique() {
+        // SP7 Bước 1 Task 5 (CONTRACT): V6 bỏ uk_wo_idempotency_key. Order cùng idempotency_key KHÔNG
+        // còn bị DB chặn (drift CÓ CHỦ ĐÍCH). Dedup withdraw nay enforce ở idempotency_record. bank_ref
+        // VẪN UNIQUE (uk_wo_bank_ref, E7) — xem duplicateBankRef_violatesDbConstraint bên dưới.
         repository.save(WithdrawalOrder.create("user-A", 7L, new BigDecimal("30"), "dup-idem", "ref-x"));
         em.flush();
 
-        assertThrows(org.springframework.dao.DataIntegrityViolationException.class, () -> {
-            repository.save(WithdrawalOrder.create("user-A", 7L, new BigDecimal("30"), "dup-idem", "ref-y"));
-            jpa.flush();
-        });
+        // Order thứ hai cùng key nhưng bank_ref KHÁC: INSERT thành công (UNIQUE trên key đã bỏ).
+        repository.save(WithdrawalOrder.create("user-A", 7L, new BigDecimal("30"), "dup-idem", "ref-y"));
+        jpa.flush();
+        em.clear();
+
+        assertEquals(2, jpa.count(), "order layer giữ cả hai order trùng key sau khi bỏ UNIQUE");
     }
 
     @Test
