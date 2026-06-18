@@ -7,8 +7,10 @@ import java.math.BigDecimal;
 import java.time.Instant;
 
 @Entity
-@Table(name = "wallet_transaction",
-       uniqueConstraints = @UniqueConstraint(columnNames = "idempotencyKey")) // chốt idempotency tầng DB
+// SP7 Bước 1: UNIQUE(idempotency_key) đã bị bỏ khỏi sổ cái (Flyway V6) — dedup giờ enforce ở
+// bảng idempotency_record. KHÔNG khai uniqueConstraints ở đây (ddl-auto=none, Flyway sở hữu schema)
+// để annotation không lệch với DB thật.
+@Table(name = "wallet_transaction")
 public class WalletTransactionEntity {
 
     @Id
