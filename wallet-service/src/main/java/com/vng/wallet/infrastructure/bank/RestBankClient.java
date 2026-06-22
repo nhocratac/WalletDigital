@@ -34,7 +34,9 @@ public class RestBankClient implements BankClient {
         SimpleClientHttpRequestFactory f = new SimpleClientHttpRequestFactory();
         f.setConnectTimeout(timeoutMillis);
         f.setReadTimeout(timeoutMillis); // PHẢI có timeout (bài học gateway)
-        this.restClient = RestClient.builder().baseUrl(baseUrl).requestFactory(f).build();
+        this.restClient = RestClient.builder().baseUrl(baseUrl).requestFactory(f)
+                .requestInterceptor(new com.vng.wallet.infrastructure.observability.TraceIdClientInterceptor())
+                .build();
         this.hmacSecret = hmacSecret;
         this.serviceId = serviceId;
         this.breaker = breaker;
