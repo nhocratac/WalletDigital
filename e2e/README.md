@@ -99,3 +99,32 @@ globex create + globex topup + 2 balance độc lập). `scenario-tenant.sh` re-
 nếu muốn chạy lại sạch.
 
 > ⚠️ Scenario KHÔNG re-run được trên cùng instance wallet: `Idempotency-Key` (`t1`/`w1`/...) là toàn cục theo đời sống wallet → chạy lần 2 đụng key cũ → 422 (đúng hành vi same-key-different-payload, Stage 2). Muốn chạy lại: **restart wallet** (H2 in-memory reset). Balance check dùng so-sánh-SỐ (`check_num`) vì API trả `70.00` còn kỳ vọng viết `70.0`.
+
+## Observability — sợi chỉ traceId xuyên 3 service (`trace-thread.sh`)
+
+Chứng minh **một traceId nối liền** gateway → wallet → kyc (OB1–OB4). Gọi `withdraw` qua gateway với
+header `X-Trace-Id: e2e-trace-xyz`; một request withdraw chạm cả 3 service:
+
+```
+gateway (TraceIdFilter đọc X-Trace-Id → MDC, forward header xuống wallet)
+  → wallet (TraceIdFilter → MDC; outbound RestKycGate interceptor đính X-Trace-Id → kyc)
+    → kyc (TraceIdFilter đọc X-Trace-Id → MDC)
+```
+
+→ `grep "e2e-trace-xyz"` trong log CỦA CẢ 3 service đều ra (sợi chỉ liền). Gateway còn **echo**
+`X-Trace-Id` trên response header (sợi chỉ quay về client).
+
+Script **tự dựng stack** (3 service background, mỗi cái log ra `/tmp/e2e_trace_logs/<svc>.log`),
+drive kịch bản, grep cả 3 log, rồi **dọn** (kill PID giữ cổng). Chỉ cần Kafka chạy sẵn:
+
+```bash
+docker compose up -d            # Kafka KRaft trên localhost:9092
+bash e2e/trace-thread.sh        # chạy từ repo root
+```
+
+Kết quả mong đợi: **8 PASS / 0 FAIL** (submit + approve + create + topup + gateway-echo-traceId +
+grep traceId ở gateway/wallet/kyc).
+
+> Dùng `tenantId=default` (schema baseline H2 — không cần provision MySQL `tenant_*`). Bật DEBUG cho
+> `org.springframework.web` lúc chạy để mỗi request log một dòng TRÊN servlet thread (sau khi
+> TraceIdFilter đặt MDC) → dòng đó mang `[%X{traceId}]` — KHÔNG sửa code production, chỉ tăng log lúc e2e.
