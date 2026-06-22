@@ -12,10 +12,13 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.header.internals.RecordHeader;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.test.context.EmbeddedKafka;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 
@@ -89,5 +92,38 @@ class KycRevokedConsumerTest {
                 assertFalse(cache.isApproved("user-neg")));
         await().pollDelay(Duration.ofSeconds(1)).atMost(Duration.ofSeconds(5)).untilAsserted(() ->
                 assertThat(output.getOut()).doesNotContain("COMPENSATION-ALERT userId=user-neg"));
+    }
+
+    @Test
+    void recordWithTraceIdHeader_propagatesTraceIdIntoMdcDuringHandling(CapturedOutput output) {
+        Wallet w = walletRepository.save(Wallet.createNew("user-trace-in", "Trent"));
+        Instant revokedAt = Instant.now().minusSeconds(30);
+        walletRepository.saveTransaction(new WalletTransaction(null, w.getId(),
+                WalletTransaction.Type.WITHDRAW_HOLD, new BigDecimal("42"), "k-trace",
+                new BigDecimal("1"), Instant.now()));   // withdraw SAU revokedAt -> COMPENSATION-ALERT
+
+        ProducerRecord<String, String> rec =
+                new ProducerRecord<>("kyc.revoked", "user-trace-in", event("user-trace-in", revokedAt));
+        rec.headers().add(new RecordHeader("traceId", "kafka-trace-xyz".getBytes(StandardCharsets.UTF_8)));
+        kafkaTemplate.send(rec);
+
+        // COMPENSATION-ALERT log line phải mang traceId từ header (log pattern [%X{traceId}])
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
+                assertThat(output.getOut())
+                        .contains("[kafka-trace-xyz]")
+                        .contains("COMPENSATION-ALERT")
+                        .contains("userId=user-trace-in"));
+    }
+
+    @Test
+    void recordWithoutTraceIdHeader_consumerGeneratesOne_noError(CapturedOutput output) {
+        cache.markApproved("user-no-trace");
+
+        // message KHÔNG có header traceId -> consumer phải sinh mới, không lỗi
+        kafkaTemplate.send("kyc.revoked", "user-no-trace", event("user-no-trace", Instant.now()));
+
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
+                assertFalse(cache.isApproved("user-no-trace"), "cache vẫn evict bình thường (không lỗi)"));
+        assertThat(output.getOut()).doesNotContain("Cannot process kyc.revoked");
     }
 }
