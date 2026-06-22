@@ -18,6 +18,12 @@ spring:
       properties:
         enable.idempotence: true
 
+# Observability Nac 1 (OB2) — traceId trong moi dong log.
+# TraceIdFilter dat traceId vao MDC; pattern dinh [%X{traceId}] -> moi log tu mang correlation ID.
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{traceId}] %-5level %logger{36} - %msg%n"
+
 kyc:
   events:
     kafka-enabled: ${KYC_KAFKA_ENABLED:false}    # mặc định TẮT -> test cũ không cần Kafka
