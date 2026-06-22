@@ -42,6 +42,13 @@
   <h2>📐 Design Docs (HTML — render trực tiếp, có Mermaid)</h2>
   <div class="grid">
 
+    <a class="card star" href="docs/superpowers/specs/2026-06-22-observability-traceid-mdc-design.html">
+      <div class="ico">🧵</div>
+      <h3>Observability Nấc 1 — TraceId + MDC</h3>
+      <div class="d">Sợi chỉ traceId xuyên 3 service qua HTTP + Kafka + worker, vào MDC để mọi log tự mang [%X{traceId}]. Continue-or-generate mọi entry, clear-in-finally, interceptor outbound, format opaque. (OTel/span = Nấc 2 riêng.)</div>
+      <span class="date">2026-06-22 · mới nhất</span>
+    </a>
+
     <a class="card star" href="docs/superpowers/specs/2026-06-21-wallet-stage4-internal-auth-design.html">
       <div class="ico">🔒</div>
       <h3>Wallet Stage 4 — Internal HMAC Auth</h3>
@@ -116,6 +123,13 @@
 
   <h2>📋 Implementation Plans (TDD — render từ Markdown)</h2>
   <div class="grid">
+
+    <a class="card star" href="view.html?doc=docs/superpowers/plans/2026-06-22-observability-traceid-mdc.md">
+      <div class="ico">🧵</div>
+      <h3>Observability Nấc 1 — TraceId + MDC</h3>
+      <div class="d">6 task TDD: TraceIdFilter→MDC (wallet trước HmacVerifyFilter) → gateway/kyc MDC + log pattern → outbound interceptor → Kafka header → worker root traceId → e2e một traceId xuyên 3 service.</div>
+      <span class="date">2026-06-22 · mới nhất</span>
+    </a>
 
     <a class="card star" href="view.html?doc=docs/superpowers/plans/2026-06-22-wallet-stage4-internal-auth.md">
       <div class="ico">🔒</div>

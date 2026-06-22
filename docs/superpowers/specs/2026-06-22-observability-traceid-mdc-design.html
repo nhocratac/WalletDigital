@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Observability Nấc 1 — TraceId + MDC</title>
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: true, theme: 'dark', sequence: { showSequenceNumbers: true } });
+</script>
+<style>
+  :root{--bg:#0f1117;--card:#171a21;--ink:#e6e6e6;--muted:#9aa4b2;--accent:#7c9cff;--accent2:#5be7c4;--line:#2a2f3a;--yellow:#ffd166;--red:#ff8a8a;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;line-height:1.6;font-size:16px;}
+  .wrap{max-width:1040px;margin:0 auto;padding:44px 24px 96px}
+  header.hero{background:linear-gradient(135deg,#1b2030,#11141c);border:1px solid var(--line);border-radius:16px;padding:30px;margin-bottom:28px;}
+  header.hero h1{margin:0 0 8px;font-size:28px}
+  .meta{color:var(--muted);font-size:14px;margin-top:10px}
+  h2{margin:40px 0 6px;font-size:21px;padding-bottom:8px;border-bottom:1px solid var(--line);color:#fff;}
+  h2 .num{color:var(--accent);margin-right:8px}
+  p.lead{color:var(--muted);margin:6px 0 14px}
+  .diagram{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin:14px 0;overflow-x:auto}
+  .mermaid{display:flex;justify-content:center}
+  blockquote{margin:14px 0;padding:12px 16px;border-left:4px solid var(--yellow);background:rgba(255,209,102,.08);border-radius:0 10px 10px 0;color:#cfd6e4;}
+  blockquote strong{color:var(--yellow)}
+  code{background:rgba(255,255,255,.07);padding:2px 6px;border-radius:5px;font-size:13.5px;font-family:"SF Mono",Menlo,Consolas,monospace;color:var(--accent2)}
+  table{border-collapse:collapse;width:100%;margin:14px 0;font-size:14px}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:rgba(124,156,255,.12);color:#fff}
+  .toc{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 20px;font-size:14px}
+  .toc a{color:var(--accent);text-decoration:none} .toc a:hover{text-decoration:underline}
+  footer{margin-top:48px;color:var(--muted);font-size:13px;text-align:center}
+  a.back{color:var(--accent);text-decoration:none;font-size:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p><a class="back" href="../../../index.html">← Về trang chủ tài liệu</a></p>
+  <header class="hero">
+    <h1>🧵 Observability Nấc 1 — TraceId + MDC</h1>
+    <div class="meta">📅 2026-06-22 · sợi chỉ traceId xuyên 3 service qua HTTP + Kafka + worker, vào MDC để mọi log tự mang · Nấc 1 (correlation ID); OTel/span = Nấc 2 riêng</div>
+    <div class="meta">Quyết định OB1–OB8 do người học tự suy ra (Socratic). Gateway đã có TraceIdFilter (chưa MDC); wallet/kyc chưa có gì.</div>
+  </header>
+
+  <div class="toc">
+    <a href="#s1">1. Vấn đề: sợi chỉ đứt + không vào log</a> ·
+    <a href="#s2">2. Quyết định OB1–OB8</a> ·
+    <a href="#s3">3. Vòng propagation</a> ·
+    <a href="#s4">4. MDC là gì + bẫy</a> ·
+    <a href="#s5">5. Phạm vi 3 service</a>
+  </div>
+
+  <h2 id="s1"><span class="num">1.</span>Vấn đề</h2>
+  <p class="lead">withdraw đi qua 3 service, log rời rạc. Gateway sinh X-Trace-Id rồi forward, nhưng wallet/kyc vứt → đứt chặng đầu; và không ai nhét traceId vào log (chưa MDC).</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+    U[User] --> GW["gateway ✅ sinh+forward X-Trace-Id"]
+    GW -->|"X-Trace-Id"| W["wallet ❌ vứt, log không traceId"]
+    W -->|"gọi kyc — cũng không kèm"| K["kyc ❌"]
+  </pre></div>
+
+  <h2 id="s2"><span class="num">2.</span>Quyết định OB1–OB8</h2>
+  <table>
+    <tr><th>#</th><th>Quyết định</th><th>Lý do</th></tr>
+    <tr><td>OB1</td><td>Mỗi service có TraceIdFilter: continue-or-generate (UUID) → MDC; chạy SỚM NHẤT (trước HmacVerifyFilter)</td><td>không phải mọi luồng qua gateway; log 401/lỗi cũng cần traceId</td></tr>
+    <tr><td>OB2</td><td>Log pattern <code>[%X{traceId}]</code> ở cả 3 service</td><td>mọi dòng log tự mang, khỏi truyền tay</td></tr>
+    <tr><td>OB3</td><td>Clear MDC trong finally</td><td>ThreadLocal — thread tái dùng sẽ rò traceId cũ (bẫy T4)</td></tr>
+    <tr><td>OB4</td><td>Outbound HTTP: ClientHttpRequestInterceptor đọc MDC → đính X-Trace-Id</td><td>một chỗ cho mọi outbound (RestKycGate/RestBankClient)</td></tr>
+    <tr><td>OB5</td><td>Kafka: producer đặt traceId vào HEADER; consumer đọc header → MDC</td><td>header = metadata (không nhét payload); nối trace qua async</td></tr>
+    <tr><td>OB6</td><td>Worker (không request): sinh traceId mới (root) mỗi vòng → MDC, clear finally</td><td>không upstream → tự sinh như gateway</td></tr>
+    <tr><td>OB7</td><td>Format = UUID opaque; KHÔNG nhúng tenantId/userId/PII</td><td>traceId đi khắp log/tracing bên thứ 3; nghĩa nhúng vào id sẽ mục + rò PII</td></tr>
+    <tr><td>OB8</td><td>Nấc 1 (correlation ID); span/OTel = Nấc 2 riêng</td><td>hand-roll span = tự chế lại OTel; nấc 1 đặt nền propagation</td></tr>
+  </table>
+
+  <h2 id="s3"><span class="num">3.</span>Vòng propagation hoàn chỉnh</h2>
+  <div class="diagram"><pre class="mermaid">
+flowchart TB
+    REQ["HTTP request (X-Trace-Id?)"] --> F["TraceIdFilter: đọc/sinh → MDC\n(finally: MDC.clear)"]
+    F --> LOG["mọi log [%X{traceId}]"]
+    F --> OUT["outbound HTTP: Interceptor MDC → X-Trace-Id header → service kế"]
+    F --> PUB["publish Kafka: producer → record HEADER traceId → consumer đọc → MDC"]
+    WK["Worker @Scheduled (không request): sinh traceId ROOT → MDC → log → finally clear"]
+  </pre></div>
+  <blockquote><strong>Đối xứng:</strong> mọi điểm DỮ LIỆU ĐI VÀO một thread (HTTP / Kafka / tick đồng hồ) có một chỗ đặt MDC; mọi điểm ĐI RA (HTTP call / Kafka publish) có một chỗ đọc MDC.</blockquote>
+
+  <h2 id="s4"><span class="num">4.</span>MDC là gì + bẫy ThreadLocal</h2>
+  <div class="diagram"><pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant T as Thread #7 (pool)
+    participant M as MDC (ThreadLocal)
+    T->>M: request A → MDC.put(traceId, A)
+    Note over T: mọi log.info() → pattern %X{traceId} đọc M → [A] tự chèn
+    Note over T: xử lý xong... NẾU KHÔNG clear → trả thread về pool
+    T->>M: request B (không header) tái dùng thread #7
+    Note over M: MDC vẫn = A 💥 → log của B mang [A] sai
+  </pre></div>
+  <blockquote><strong>MDC</strong> = map key-value gắn theo thread (ThreadLocal) của thư viện log; pattern <code>%X{traceId}</code> đọc nó. <b>Cùng cơ chế + cùng bẫy với TenantContext</b> → set ở filter, <b>clear trong finally</b>, thread không-request tự sinh.</blockquote>
+
+  <h2 id="s5"><span class="num">5.</span>Phạm vi 3 service</h2>
+  <table>
+    <tr><th>Service</th><th>Hiện có</th><th>Thêm</th></tr>
+    <tr><td>gateway</td><td>TraceIdFilter (forward, attribute)</td><td>đưa vào MDC + log pattern</td></tr>
+    <tr><td>wallet</td><td>không</td><td>TraceIdFilter→MDC (trước HmacVerifyFilter) + pattern + interceptor outbound + Kafka consumer header→MDC + worker root</td></tr>
+    <tr><td>kyc</td><td>không</td><td>TraceIdFilter→MDC + pattern + Kafka producer đặt header</td></tr>
+  </table>
+  <blockquote><strong>Thứ tự filter wallet (sau Stage 4):</strong> TraceIdFilter (sớm nhất) → HmacVerifyFilter @Order(0) → TenantFilter @Order(1) → log cú 401 vẫn có traceId.</blockquote>
+
+  <footer>Observability Nấc 1 · brainstorm Socratic 2026-06-22 · bản chi tiết: <code>2026-06-22-observability-traceid-mdc-design.md</code></footer>
+</div>
+</body>
+</html>
