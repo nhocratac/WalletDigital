@@ -1,14 +1,17 @@
 package com.vng.wallet.infrastructure.scheduling;
 
 import com.vng.wallet.application.ReconciliationService;
+import com.vng.wallet.infrastructure.observability.TraceIdFilter;
 import com.vng.wallet.tenancy.TenantContext;
 import com.vng.wallet.tenancy.master.TenantRegistry;
 import com.vng.wallet.tenancy.master.TenantRegistryRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * SP5 Task 7 (T9): the multi-tenant fan-out for the reconciliation worker.
@@ -62,10 +65,20 @@ public class MultiTenantReconciliationRunner {
         }
         if (active.isEmpty()) {
             // Single-schema baseline: nothing in the registry → reconcile the current/default context.
-            reconciliationService.reconcile();
+            // OB6: no upstream request → generate a fresh root traceId for this pass into MDC so the
+            // round's log lines carry [%X{traceId}]; remove("traceId") in finally (NOT MDC.clear() —
+            // don't disturb other MDC/ThreadLocal state).
+            MDC.put(TraceIdFilter.MDC_KEY, UUID.randomUUID().toString());
+            try {
+                reconciliationService.reconcile();
+            } finally {
+                MDC.remove(TraceIdFilter.MDC_KEY);
+            }
             return;
         }
         for (TenantRegistry tenant : active) {
+            // OB6: each tenant's pass is its own root trace — generate a fresh traceId per iteration.
+            MDC.put(TraceIdFilter.MDC_KEY, UUID.randomUUID().toString());
             try {
                 TenantContext.set(tenant.getTenantId());
                 reconciliationService.reconcile();
@@ -75,6 +88,7 @@ public class MultiTenantReconciliationRunner {
                         tenant.getTenantId(), e.toString());
             } finally {
                 TenantContext.clear(); // T4 — never leak this tenant into the next iteration.
+                MDC.remove(TraceIdFilter.MDC_KEY); // OB6 — remove only traceId, keep other MDC state.
             }
         }
     }

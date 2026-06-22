@@ -1,10 +1,12 @@
 package com.vng.wallet.idempotency;
 
+import com.vng.wallet.infrastructure.observability.TraceIdFilter;
 import com.vng.wallet.tenancy.TenantContext;
 import com.vng.wallet.tenancy.master.TenantRegistry;
 import com.vng.wallet.tenancy.master.TenantRegistryRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -14,6 +16,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Collections;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * SP7 Bước 1 Task 6 (L2): TTL purge cho {@code idempotency_record} — giữ bảng record KHÔNG phình.
@@ -83,12 +86,22 @@ public class IdempotencyPurgeWorker {
         }
 
         if (active.isEmpty()) {
-            int purged = store.deleteOlderThan(cutoff);
-            log.debug("idempotency purge (baseline): removed {} record(s) older than {}", purged, cutoff);
+            // OB6: thread @Scheduled không có upstream → sinh root traceId mới cho vòng này vào MDC để
+            // log mang [%X{traceId}]; remove("traceId") trong finally (KHÔNG MDC.clear() — không đụng
+            // MDC/ThreadLocal khác).
+            MDC.put(TraceIdFilter.MDC_KEY, UUID.randomUUID().toString());
+            try {
+                int purged = store.deleteOlderThan(cutoff);
+                log.debug("idempotency purge (baseline): removed {} record(s) older than {}", purged, cutoff);
+            } finally {
+                MDC.remove(TraceIdFilter.MDC_KEY);
+            }
             return;
         }
 
         for (TenantRegistry tenant : active) {
+            // OB6: mỗi tenant một root trace — sinh traceId mới mỗi vòng.
+            MDC.put(TraceIdFilter.MDC_KEY, UUID.randomUUID().toString());
             try {
                 TenantContext.set(tenant.getTenantId());
                 int purged = store.deleteOlderThan(cutoff);
@@ -100,6 +113,7 @@ public class IdempotencyPurgeWorker {
                         tenant.getTenantId(), e.toString());
             } finally {
                 TenantContext.clear(); // T4 — không rò tenant này sang vòng/tenant kế.
+                MDC.remove(TraceIdFilter.MDC_KEY); // OB6 — chỉ remove traceId, giữ MDC state khác.
             }
         }
     }
