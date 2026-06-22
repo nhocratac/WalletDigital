@@ -23,6 +23,16 @@ public class HmacRequestSigner implements RequestSigner {
     }
 
     @Override
+    public String buildCanonical(String serviceId, String method, String path, String timestamp,
+                                 byte[] body, String userId, String tenantId) {
+        String base = buildCanonical(serviceId, method, path, timestamp, body);
+        if (userId != null && tenantId != null) {
+            return base + "\n" + userId + "\n" + tenantId;
+        }
+        return base;
+    }
+
+    @Override
     public String sign(String secret, String canonical) {
         try {
             Mac mac = Mac.getInstance("HmacSHA256");

@@ -152,5 +152,21 @@ CODE=$(echo "$R" | tail -1); BODY=$(echo "$R" | head -1)
 check "withdraw#2 (revoked)" "$CODE" "403"
 echo "  body: $BODY"
 
+echo "=== [8] ⭐ Zero-trust: gọi THẲNG wallet :8080 bỏ qua gateway, X-User-Id giả, KHÔNG chữ ký -> 401 ==="
+# Lỗ hổng Stage4 đã bịt: wallet verify HMAC inbound (HmacVerifyFilter @Order(0)) trước TenantFilter.
+# Cần WALLET_INTERNAL_HMAC_SECRET=e2e-internal (khớp GATEWAY_HMAC_SECRET) + auth-enabled=true khi chạy wallet.
+R=$(curl -s -w '\n%{http_code}' -X POST "http://localhost:8080/wallets/$WID/withdraw" \
+  -H "X-User-Id: nan-nhan" -H "X-Tenant-Id: cong-ty-khac" -H "Idempotency-Key: attack-1" \
+  -H "Content-Type: application/json" --data-raw '{"amount":1000000000}')
+check "direct-bypass forged X-User-Id (no signature)" "$(echo "$R" | tail -1)" "401"
+
+echo "=== [9] ⭐ Zero-trust: gọi thẳng wallet, X-Service-Id allowlisted nhưng chữ ký RÁC -> 401 ==="
+TS=$(date +%s)
+R=$(curl -s -w '\n%{http_code}' -X POST "http://localhost:8080/wallets/$WID/withdraw" \
+  -H "X-Service-Id: api-gateway" -H "X-Timestamp: $TS" -H "X-Signature: deadbeef" \
+  -H "X-User-Id: nan-nhan" -H "X-Tenant-Id: cong-ty-khac" -H "Idempotency-Key: attack-2" \
+  -H "Content-Type: application/json" --data-raw '{"amount":50}')
+check "direct-bypass invalid signature" "$(echo "$R" | tail -1)" "401"
+
 echo ""
 echo "================= KẾT QUẢ: $pass PASS / $fail FAIL ================="

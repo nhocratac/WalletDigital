@@ -85,7 +85,9 @@ class GatewayForwardingIntegrationTest {
         // locks the wire-level canonical that wallet-service re-verifies.
         // canonical = serviceId \n method \n path \n timestamp \n sha256(body)
         String emptySha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"; // sha256("")
-        String canonical = String.join("\n", "api-gateway", "GET", "/wallets/1", fwdTs, emptySha);
+        // Stage4 (S2): gateway signs canonical BINDING identity (X-User-Id/X-Tenant-Id from JWT).
+        String canonical = String.join("\n", "api-gateway", "GET", "/wallets/1", fwdTs, emptySha,
+                "user-1", "acme");
         javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
         mac.init(new javax.crypto.spec.SecretKeySpec(
                 "it-secret".getBytes(java.nio.charset.StandardCharsets.UTF_8), "HmacSHA256"));
@@ -127,7 +129,9 @@ class GatewayForwardingIntegrationTest {
         StringBuilder bodySha = new StringBuilder();
         for (byte b : md.digest(bodyBytes)) bodySha.append(String.format("%02x", b));
 
-        String canonical = String.join("\n", "api-gateway", "POST", "/wallets/1/topup", fwdTs, bodySha.toString());
+        // Stage4 (S2): gateway signs canonical BINDING identity (X-User-Id/X-Tenant-Id from JWT).
+        String canonical = String.join("\n", "api-gateway", "POST", "/wallets/1/topup", fwdTs, bodySha.toString(),
+                "user-1", "acme");
         javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
         mac.init(new javax.crypto.spec.SecretKeySpec(
                 "it-secret".getBytes(java.nio.charset.StandardCharsets.UTF_8), "HmacSHA256"));
@@ -172,7 +176,9 @@ class GatewayForwardingIntegrationTest {
         java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
         StringBuilder bodySha = new StringBuilder();
         for (byte b : md.digest(bodyBytes)) bodySha.append(String.format("%02x", b));
-        String canonical = String.join("\n", "api-gateway", "POST", "/wallets/1/topup", fwdTs, bodySha.toString());
+        // Stage4 (S2): gateway signs canonical BINDING identity (X-User-Id/X-Tenant-Id from JWT).
+        String canonical = String.join("\n", "api-gateway", "POST", "/wallets/1/topup", fwdTs, bodySha.toString(),
+                "user-1", "acme");
         javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
         mac.init(new javax.crypto.spec.SecretKeySpec(
                 "it-secret".getBytes(java.nio.charset.StandardCharsets.UTF_8), "HmacSHA256"));
@@ -248,7 +254,9 @@ class GatewayForwardingIntegrationTest {
         assertNotNull(fwdTs);
         assertNotEquals("deadbeef", fwd.getHeader("X-Signature"));
         String emptySha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"; // sha256("")
-        String canonical = String.join("\n", "api-gateway", "GET", "/wallets/1", fwdTs, emptySha);
+        // Stage4 (S2): gateway signs canonical BINDING identity (X-User-Id/X-Tenant-Id from JWT).
+        String canonical = String.join("\n", "api-gateway", "GET", "/wallets/1", fwdTs, emptySha,
+                "user-1", "acme");
         javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
         mac.init(new javax.crypto.spec.SecretKeySpec(
                 "it-secret".getBytes(java.nio.charset.StandardCharsets.UTF_8), "HmacSHA256"));

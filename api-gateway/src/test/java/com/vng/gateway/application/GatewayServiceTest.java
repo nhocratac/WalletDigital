@@ -57,8 +57,10 @@ class GatewayServiceTest {
         assertNotEquals("deadbeef", sent.get("X-Signature"));  // signed value wins over client value
 
         // The signed X-Signature must be exactly the signer output over the real canonical.
+        // Stage4 (S2): canonical now BINDS identity (X-User-Id/X-Tenant-Id) — the gateway signs the
+        // 7-arg identity-if-present canonical, so the expected signature covers caller.userId/tenantId.
         String canonical = signer.buildCanonical("api-gateway", "GET", "/wallets/1",
-                "1700000000", new byte[0]);
+                "1700000000", new byte[0], "user-1", "acme");
         assertEquals(signer.sign("it-secret", canonical), sent.get("X-Signature"));
     }
 }

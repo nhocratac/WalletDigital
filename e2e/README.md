@@ -24,9 +24,12 @@ cd kyc-service && KYC_KAFKA_ENABLED=true KYC_INTERNAL_HMAC_SECRET=e2e-internal \
   KYC_VERIFIER_HMAC_SECRET=e2e-verifier KAFKA_BOOTSTRAP=localhost:9092 mvn spring-boot:run
 
 cd wallet-service && WALLET_KAFKA_ENABLED=true WALLET_KYC_HMAC_SECRET=e2e-internal \
+  WALLET_INTERNAL_HMAC_SECRET=e2e-internal \
   WALLET_KYC_BASE_URL=http://localhost:8082 KAFKA_BOOTSTRAP=localhost:9092 \
   WALLET_BANK_MOCK=true WALLET_RECONCILE_ENABLED=true WALLET_RECONCILE_INTERVAL_MS=1000 \
   mvn spring-boot:run
+# Stage4: WALLET_INTERNAL_HMAC_SECRET PHẢI khớp GATEWAY_HMAC_SECRET (=e2e-internal) — wallet verify
+# HMAC inbound (auth-enabled mặc định true). Gọi thẳng wallet không chữ ký hợp lệ -> 401 (kịch bản [8]/[9]).
 
 cd api-gateway && GATEWAY_HMAC_SECRET=e2e-internal \
   GATEWAY_JWT_PUBLIC_KEY="$(cat /tmp/e2e_sp3/pub.b64)" mvn spring-boot:run
@@ -78,6 +81,7 @@ cd wallet-service && WALLET_DB_URL="jdbc:mysql://localhost:3306/" \
   WALLET_DB_USERNAME=root WALLET_DB_PASSWORD=secret \
   WALLET_DB_DRIVER=com.mysql.cj.jdbc.Driver \
   WALLET_KAFKA_ENABLED=true WALLET_KYC_HMAC_SECRET=e2e-internal \
+  WALLET_INTERNAL_HMAC_SECRET=e2e-internal \
   WALLET_KYC_BASE_URL=http://localhost:8082 KAFKA_BOOTSTRAP=localhost:9092 \
   mvn spring-boot:run
 # (kyc + gateway như mục "Cách chạy")

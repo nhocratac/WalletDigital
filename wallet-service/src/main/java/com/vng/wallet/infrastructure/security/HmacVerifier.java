@@ -1,30 +1,36 @@
-package com.vng.kyc.infrastructure.security;
-
-import org.springframework.stereotype.Component;
+package com.vng.wallet.infrastructure.security;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 
-/** Verify HMAC theo HỢP ĐỒNG chung: serviceId\nmethod\npath\ntimestamp\nsha256hex(body). */
-@Component
+/**
+ * Stage4 (S2): verify HMAC inbound theo canonical "identity-if-present".
+ *
+ * <p>Soi gương {@code kyc.infrastructure.security.HmacVerifier} (tạm chấp nhận trùng — module
+ * shared-hmac dùng chung cần parent POM, đã ghi nợ trong plan/design S6).
+ *
+ * <p>Canonical CƠ SỞ giống mọi hop nội bộ:
+ * <pre>serviceId\nmethod\npath\ntimestamp\nsha256hex(body)</pre>
+ * Khi request MANG {@code X-User-Id}/{@code X-Tenant-Id} (hop gateway→wallet), chúng được
+ * APPEND theo thứ tự cố định:
+ * <pre>...\nsha256hex(body)\nuserId\ntenantId</pre>
+ * Khi KHÔNG mang (direct→kyc submit/revoke, webhook bank) → canonical KHÔNG đổi so với hợp
+ * đồng cũ → tương thích ngược.
+ *
+ * <p>An toàn (S2): identity nằm TRONG canonical đã ký → đổi {@code X-User-Id} sau khi ký làm
+ * canonical lệch → verify thất bại (401). Identity ràng buộc vào chữ ký.
+ *
+ * <p>Plain class (KHÔNG {@code @Component}) — {@link HmacVerifyFilter} tự khởi tạo. Tránh phải có
+ * bean trong các slice {@code @WebMvcTest} (chỉ quét web component) trong khi filter vẫn được đăng ký.
+ */
 public class HmacVerifier {
 
+    /** Canonical identity-if-present: append userId/tenantId CHỈ KHI cả hai không null. */
     public String buildCanonical(String serviceId, String method, String path,
-                                 String timestamp, byte[] body) {
-        return String.join("\n", serviceId, method, path, timestamp, sha256Hex(body));
-    }
-
-    /**
-     * Stage4 (S2): canonical "identity-if-present" — append {@code userId}/{@code tenantId} CHỈ KHI
-     * cả hai không null. Direct→kyc (submit/revoke) không mang identity → null → canonical KHÔNG đổi
-     * so với hợp đồng cũ → 58 test kyc + đường direct vẫn xanh (tương thích ngược). Hop gateway→kyc
-     * (mang identity từ JWT) → canonical gồm identity, khớp gateway ký gồm identity.
-     */
-    public String buildCanonical(String serviceId, String method, String path, String timestamp,
-                                 byte[] body, String userId, String tenantId) {
-        String base = buildCanonical(serviceId, method, path, timestamp, body);
+                                 String timestamp, byte[] body, String userId, String tenantId) {
+        String base = String.join("\n", serviceId, method, path, timestamp, sha256Hex(body));
         if (userId != null && tenantId != null) {
             return base + "\n" + userId + "\n" + tenantId;
         }

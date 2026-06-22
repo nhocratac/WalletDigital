@@ -158,6 +158,13 @@
                 <configuration>
                     <systemPropertyVariables>
                         <api.version>${docker.api.version}</api.version>
+                        <!-- Stage4: inbound HMAC verification defaults ON in production. The pre-existing
+                             functional test suite (230 tests) exercises wallet BUSINESS behavior and sends
+                             unsigned MockMvc/TestRestTemplate requests; flip the filter OFF by default so
+                             that behavior is preserved unchanged. Dedicated auth tests re-enable it with
+                             @TestPropertySource(wallet.internal.auth-enabled=true) — Spring property source
+                             precedence makes that win over this system property — and sign real requests. -->
+                        <wallet.internal.auth-enabled>false</wallet.internal.auth-enabled>
                     </systemPropertyVariables>
                 </configuration>
             </plugin>

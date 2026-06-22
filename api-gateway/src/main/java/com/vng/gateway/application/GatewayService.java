@@ -57,8 +57,12 @@ public class GatewayService {
         RouteMatch route = match.get();
 
         String timestamp = Long.toString(epochSeconds);
+        // Stage4 (S2): ký GỒM identity (X-User-Id/X-Tenant-Id bóc từ JWT) vào canonical → downstream
+        // verify ràng buộc identity vào chữ ký (đổi header sau khi ký ⇒ verify fail). identity-if-present:
+        // caller luôn có userId/tenantId nên hop này luôn ký gồm chúng.
         String canonical = signer.buildCanonical(identity.serviceId(), method,
-                route.downstreamPath(), timestamp, body == null ? new byte[0] : body);
+                route.downstreamPath(), timestamp, body == null ? new byte[0] : body,
+                caller.userId(), caller.tenantId());
         String signature = signer.sign(identity.hmacSecret(), canonical);
 
         Map<String, String> headers = new HashMap<>();

@@ -53,8 +53,11 @@ public class InternalAuthFilter extends OncePerRequestFilter {
                 || !hmac.isTimestampFresh(Instant.now().getEpochSecond(), parseLong(timestamp), 300)) {
             write(response, 401, "Missing or stale signature"); return;
         }
+        // Stage4 (S2): identity-if-present — đường direct→kyc không mang identity → canonical KHÔNG
+        // đổi (tương thích ngược); hop gateway→kyc mang X-User-Id/X-Tenant-Id → canonical gồm identity.
         String canonical = hmac.buildCanonical(serviceId, cached.getMethod(),
-                cached.getRequestURI(), timestamp, cached.getBody());
+                cached.getRequestURI(), timestamp, cached.getBody(),
+                cached.getHeader("X-User-Id"), cached.getHeader("X-Tenant-Id"));
         if (!hmac.verify(props.getInternalHmacSecret(), canonical, signature)) {
             write(response, 401, "Invalid signature"); return;
         }
