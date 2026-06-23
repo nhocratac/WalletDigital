@@ -131,6 +131,13 @@
   <h2>📋 Implementation Plans (TDD — render từ Markdown)</h2>
   <div class="grid">
 
+    <a class="card star" href="view.html?doc=docs/superpowers/plans/2026-06-23-transactional-outbox.md">
+      <div class="ico">📤</div>
+      <h3>Transactional Outbox (kyc)</h3>
+      <div class="d">5 task TDD: bảng outbox + repo → OutboxKycEventPublisher (ghi outbox trong tx revoke, nguyên tử) → OutboxRelay (poll→Kafka, at-least-once) → purge TTL → regression consumer trùng (D9) + e2e không-mất-event. Swap adapter, revoke không đổi.</div>
+      <span class="date">2026-06-23 · mới nhất</span>
+    </a>
+
     <a class="card star" href="view.html?doc=docs/superpowers/plans/2026-06-22-observability-traceid-mdc.md">
       <div class="ico">🧵</div>
       <h3>Observability Nấc 1 — TraceId + MDC</h3>
