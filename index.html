@@ -42,6 +42,13 @@
   <h2>📐 Design Docs (HTML — render trực tiếp, có Mermaid)</h2>
   <div class="grid">
 
+    <a class="card star" href="docs/superpowers/specs/2026-06-23-transactional-outbox-design.html">
+      <div class="ico">📤</div>
+      <h3>Transactional Outbox</h3>
+      <div class="d">Không mất event giữa commit DB ↔ publish Kafka (nợ SP3/SP4): ghi event vào bảng outbox cùng tx nghiệp vụ (nguyên tử) → relay đẩy ra Kafka (at-least-once) → consumer idempotent (D9) nuốt trùng. Polling vs CDC, purge.</div>
+      <span class="date">2026-06-23 · mới nhất</span>
+    </a>
+
     <a class="card star" href="docs/superpowers/specs/2026-06-22-observability-traceid-mdc-design.html">
       <div class="ico">🧵</div>
       <h3>Observability Nấc 1 — TraceId + MDC</h3>
