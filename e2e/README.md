@@ -128,3 +128,29 @@ grep traceId ở gateway/wallet/kyc).
 > Dùng `tenantId=default` (schema baseline H2 — không cần provision MySQL `tenant_*`). Bật DEBUG cho
 > `org.springframework.web` lúc chạy để mỗi request log một dòng TRÊN servlet thread (sau khi
 > TraceIdFilter đặt MDC) → dòng đó mang `[%X{traceId}]` — KHÔNG sửa code production, chỉ tăng log lúc e2e.
+
+## Transactional outbox — event không mất (`outbox-not-lost.sh`)
+
+Chứng minh outbox pattern của kyc: `revoke()` ghi REVOKED + outbox-row PENDING trong CÙNG tx
+(không còn publish Kafka trực tiếp); `OutboxRelay` (@Scheduled) mới là bên publish → event
+**không thể mất** giữa "DB đã REVOKED" và "Kafka đã nhận".
+
+Vì kyc dùng **H2 in-memory** (restart = mất outbox table), script KHÔNG dùng kịch bản restart
+ON/OFF mà mô phỏng "cửa sổ crash-trước-publish" bằng `KYC_OUTBOX_RELAY_INITIAL_DELAY_MS=15000`
+(một tiến trình kyc duy nhất — relay im lặng 15s đầu, interval bình thường 2s sau đó):
+
+- **Phase A** (trong initial-delay): revoke xong → kyc GET status = REVOKED NGAY, nhưng wallet
+  CHƯA nhận event (withdraw vẫn 202 — cache stale; log wallet chưa có dấu vết consumer) — event
+  nằm PENDING trong outbox, **chưa gửi nhưng không mất**.
+- **Phase B** (sau initial-delay): relay pass đầu tiên publish → log wallet có dấu vết consumer
+  đã xử lý event → withdraw kế tiếp **403**.
+
+Script tự dựng stack như `trace-thread.sh` (3 service background, log `/tmp/e2e_outbox_logs/`),
+tự bật Kafka nếu chưa chạy (và chỉ `docker compose down` khi chính nó bật), dọn PID giữ cổng.
+
+```bash
+bash e2e/outbox-not-lost.sh     # chạy từ repo root
+```
+
+Kết quả mong đợi: **11 PASS / 0 FAIL**. Re-run được (userId unique mỗi lần chạy — topic còn giữ
+event cũ và consumer group của wallet là broadcast UUID nên đọc lại từ đầu topic).
