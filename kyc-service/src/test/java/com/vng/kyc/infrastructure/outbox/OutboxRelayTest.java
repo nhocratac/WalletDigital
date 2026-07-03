@@ -40,7 +40,11 @@ import static org.mockito.Mockito.doThrow;
         // sẽ fire lượt ĐẦU ngay khi context start bất kể interval — nên đẩy CẢ initial-delay (test
         // hook, xem OutboxRelay#relay) lẫn interval ra ngoài thời gian chạy test.
         "kyc.outbox.relay-initial-delay-ms=2147483647",
-        "kyc.outbox.relay-interval-ms=2147483647"
+        "kyc.outbox.relay-interval-ms=2147483647",
+        // OutboxPurge (Task 4) chạy nền dưới cùng cờ kafka-enabled — im lặng nó y hệt relay ở trên,
+        // nếu không nó có thể xoá SENT row mà test này đang assert giữa lúc chạy.
+        "kyc.outbox.purge-initial-delay-ms=2147483647",
+        "kyc.outbox.purge-interval-ms=2147483647"
 })
 @EmbeddedKafka(partitions = 1, topics = "kyc.revoked") // 1 partition -> offset order == send order (O7 assertion)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)

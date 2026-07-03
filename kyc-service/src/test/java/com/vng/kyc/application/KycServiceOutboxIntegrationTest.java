@@ -31,7 +31,11 @@ import static org.mockito.Mockito.*;
         // fire lượt ĐẦU ngay khi context start bất kể interval — nên phải đẩy CẢ initial-delay
         // (test hook, xem OutboxRelay#relay) lẫn interval ra ngoài thời gian chạy test.
         "kyc.outbox.relay-initial-delay-ms=2147483647",
-        "kyc.outbox.relay-interval-ms=2147483647"
+        "kyc.outbox.relay-interval-ms=2147483647",
+        // OutboxPurge (Task 4) chạy nền dưới cùng cờ kafka-enabled — im lặng nó y hệt relay ở trên,
+        // nếu không nó có thể xoá SENT row đang được assert giữa lúc test chạy.
+        "kyc.outbox.purge-initial-delay-ms=2147483647",
+        "kyc.outbox.purge-interval-ms=2147483647"
 })
 class KycServiceOutboxIntegrationTest {
 

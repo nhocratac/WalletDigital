@@ -39,6 +39,15 @@ kyc:
     # OutboxRelayTest gọi thẳng relayPass()) phải override CẢ relay-initial-delay-ms LẪN
     # relay-interval-ms = 2147483647 trong @SpringBootTest properties của chính nó.
     relay-initial-delay-ms: ${KYC_OUTBOX_RELAY_INITIAL_DELAY_MS:0}
+    # OutboxPurge (O5) — dọn row SENT cũ hơn TTL để bảng outbox không phình vô hạn. Cùng cờ activation
+    # với relay (kyc.events.kafka-enabled=true), không có cờ riêng. Mặc định 1 giờ/lượt là đủ thưa vì
+    # đây chỉ là dọn dẹp định kỳ, không nằm trên đường ghi/relay nóng.
+    ttl-days: ${KYC_OUTBOX_TTL_DAYS:7}
+    purge-interval-ms: ${KYC_OUTBOX_PURGE_INTERVAL_MS:3600000}
+    # purge-initial-delay-ms mặc định 0 (prod chạy ngay) — TEST HOOK giống relay-initial-delay-ms: test
+    # nào bật kafka-enabled nhưng cần purge nền im lặng phải override CẢ purge-initial-delay-ms LẪN
+    # purge-interval-ms = 2147483647 trong @SpringBootTest properties của chính nó.
+    purge-initial-delay-ms: ${KYC_OUTBOX_PURGE_INITIAL_DELAY_MS:0}
   internal-hmac-secret: ${KYC_INTERNAL_HMAC_SECRET:local-dev-secret}
   verifier-hmac-secret: ${KYC_VERIFIER_HMAC_SECRET:verifier-dev-secret}
   allowed-services: api-gateway,wallet-service

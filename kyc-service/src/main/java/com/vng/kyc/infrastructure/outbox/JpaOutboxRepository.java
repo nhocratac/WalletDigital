@@ -2,6 +2,7 @@ package com.vng.kyc.infrastructure.outbox;
 
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
@@ -35,7 +36,12 @@ public class JpaOutboxRepository implements OutboxRepository {
         });
     }
 
+    // Derived delete-by query thực thi remove() từng entity (không phải bulk JPQL) -> BẮT BUỘC chạy
+    // trong 1 transaction thật. @DataJpaTest (JpaOutboxRepositoryTest) tự bọc mỗi test trong tx nên
+    // không lộ vấn đề này, nhưng OutboxPurge chạy ngoài mọi @Transactional (job nền, @SpringBootTest
+    // của OutboxPurgeTest cũng không tự bọc tx) -> cần @Transactional tường minh ở đây.
     @Override
+    @Transactional
     public void deleteSentOlderThan(Instant cutoff) {
         outboxJpa.deleteByStatusAndSentAtBefore(OutboxStatus.SENT, cutoff);
     }
