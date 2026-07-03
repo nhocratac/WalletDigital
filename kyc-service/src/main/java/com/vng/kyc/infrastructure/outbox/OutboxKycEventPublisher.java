@@ -7,7 +7,7 @@ import org.springframework.stereotype.Component;
 import java.time.Instant;
 
 /**
- * ADAPTER outbox (O1) — thay KafkaKycEventPublisher ở đường revoke khi bật cờ Kafka.
+ * ADAPTER outbox (O1) — publisher trên đường revoke khi bật cờ Kafka.
  * publishKycRevoked() KHÔNG gọi Kafka trực tiếp: chỉ ghi 1 row PENDING vào bảng outbox,
  * trong CÙNG transaction với thay đổi nghiệp vụ (KycService.revoke() là @Transactional) —
  * nếu tx rollback thì row outbox cũng biến mất cùng lúc (nguyên tử). Một relay riêng
