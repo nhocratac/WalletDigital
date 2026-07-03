@@ -1,6 +1,5 @@
 package com.vng.kyc.infrastructure.events;
 
-import com.vng.kyc.domain.KycEventPublisher;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.slf4j.MDC;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -10,10 +9,14 @@ import org.springframework.stereotype.Component;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 
-/** ADAPTER Kafka thay Logging khi bật cờ — domain/application KHÔNG đổi (port trả công). */
+/**
+ * Publisher Kafka thực sự cho kyc.revoked. KHÔNG còn implements KycEventPublisher / không
+ * còn nằm trên đường revoke() (Task 2 thay bằng OutboxKycEventPublisher ghi outbox, atomic
+ * với tx nghiệp vụ). Giữ lại để OutboxRelay (Task 3) tái sử dụng cho việc publish thật.
+ */
 @Component
 @ConditionalOnProperty(name = "kyc.events.kafka-enabled", havingValue = "true")
-public class KafkaKycEventPublisher implements KycEventPublisher {
+public class KafkaKycEventPublisher {
 
     public static final String TOPIC = "kyc.revoked";
     /** Kafka record header carrying the correlation ID (OB5). Matches the consumer side. */
@@ -26,7 +29,6 @@ public class KafkaKycEventPublisher implements KycEventPublisher {
         this.kafkaTemplate = kafkaTemplate;
     }
 
-    @Override
     public void publishKycRevoked(String userId, String reason) {
         String payload = "{\"userId\":\"" + userId + "\",\"reason\":\"" + reason.replace("\"", "'")
                 + "\",\"revokedAt\":\"" + Instant.now() + "\"}";
