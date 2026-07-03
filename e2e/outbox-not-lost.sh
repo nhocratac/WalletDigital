@@ -47,7 +47,7 @@ KYC=http://localhost:8082
 # USER_ID unique mỗi lần chạy: topic kyc.revoked GIỮ event của các lần chạy trước, và consumer group
 # của wallet có suffix UUID ngẫu nhiên (broadcast) -> mỗi lần boot wallet đọc lại từ đầu topic. Nếu
 # userId cố định, event CŨ của lần chạy trước sẽ match grep Phase A (false positive "đã consume").
-USER_ID="user-outbox-$(date +%s)"
+USER_ID="user-outbox-$(date +%s)-$$"
 RELAY_INITIAL_DELAY_MS=15000
 mkdir -p "$D" "$LOGDIR"
 pass=0; fail=0
@@ -206,13 +206,25 @@ check "withdraw#1 trong cửa sổ initial-delay (VẪN 202 — cache stale, eve
 echo "=== [8] ⭐ PHASE A: wallet log CHƯA có bằng chứng consumer xử lý event (event còn PENDING trong outbox) ==="
 grep_not_has "phase A (chưa consume)" "$LOGDIR/wallet.log" "$CONSUMED_RE"
 
-echo "=== [9] Chờ qua initial-delay (${RELAY_INITIAL_DELAY_MS}ms) + 1 chu kỳ relay (2000ms) + buffer ==="
-SLEEP_S=$(( (RELAY_INITIAL_DELAY_MS + 2000 + 5000) / 1000 ))
-echo "  sleep ${SLEEP_S}s..."
-sleep "$SLEEP_S"
+echo "=== [9] Chờ qua initial-delay (${RELAY_INITIAL_DELAY_MS}ms) — relay chưa fire lượt nào trước mốc này ==="
+INITIAL_DELAY_S=$(( RELAY_INITIAL_DELAY_MS / 1000 ))
+echo "  sleep ${INITIAL_DELAY_S}s (initial delay)..."
+sleep "$INITIAL_DELAY_S"
 
-echo "=== [10] ⭐ PHASE B: relay đã publish -> wallet log CÓ bằng chứng consumer đã xử lý event ==="
-grep_has "phase B (đã consume, event KHÔNG MẤT)" "$LOGDIR/wallet.log" "$CONSUMED_RE"
+echo "=== [10] ⭐ PHASE B: poll wallet log chờ bằng chứng consumer đã xử lý event (relay + Kafka + consumer có thể chậm trên máy chậm) ==="
+# Poll thay vì 1 lần sleep-rồi-check duy nhất: máy chậm có thể khiến lượt fire đầu tiên của relay
+# (ngay sau initial-delay) tới muộn hơn interval danh nghĩa -> check 1 lần dễ FAIL giả (flaky).
+POLL_TIMEOUT_S=$(( (2000 + 30000) / 1000 ))
+consumed=0
+for i in $(seq 1 "$POLL_TIMEOUT_S"); do
+  if grep -Eq "$CONSUMED_RE" "$LOGDIR/wallet.log" 2>/dev/null; then consumed=1; break; fi
+  sleep 1
+done
+if [ "$consumed" -eq 1 ]; then
+  echo "  ✅ phase B (đã consume, event KHÔNG MẤT): CÓ /$CONSUMED_RE/ trong $LOGDIR/wallet.log (sau ~${i}s poll)"; pass=$((pass+1))
+else
+  echo "  ❌ phase B (đã consume, event KHÔNG MẤT): KHÔNG thấy /$CONSUMED_RE/ trong $LOGDIR/wallet.log (sau ${POLL_TIMEOUT_S}s poll)"; fail=$((fail+1))
+fi
 
 echo "=== [11] ⭐ PHASE B: withdraw#2 (10) sau khi event đã tới -> 403 (cache evicted, gate sync REVOKED) ==="
 R=$(curl -s -w '\n%{http_code}' -X POST "$GW/api/wallets/$WID/withdraw" \
