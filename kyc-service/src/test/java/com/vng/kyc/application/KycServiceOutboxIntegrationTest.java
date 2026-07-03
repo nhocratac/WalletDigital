@@ -24,7 +24,14 @@ import static org.mockito.Mockito.*;
  * tiếp) và toàn bộ thay đổi (kyc_case + outbox) phải nguyên tử trong CÙNG transaction.
  */
 @SpringBootTest(properties = {
-        "kyc.events.kafka-enabled=true"
+        "kyc.events.kafka-enabled=true",
+        // OutboxSchedulingConfig bật @EnableScheduling khi kafka-enabled=true (đúng hợp đồng
+        // production). Test này mock KafkaTemplate và KHÔNG mong đợi relay thật chạy nền tự
+        // markSent các outbox row đang assert PENDING. LƯU Ý: fixedDelay không có initial delay sẽ
+        // fire lượt ĐẦU ngay khi context start bất kể interval — nên phải đẩy CẢ initial-delay
+        // (test hook, xem OutboxRelay#relay) lẫn interval ra ngoài thời gian chạy test.
+        "kyc.outbox.relay-initial-delay-ms=2147483647",
+        "kyc.outbox.relay-interval-ms=2147483647"
 })
 class KycServiceOutboxIntegrationTest {
 

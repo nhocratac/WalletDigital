@@ -57,8 +57,16 @@ public class OutboxRelay {
         this.batchSize = batchSize;
     }
 
-    /** Entry point của scheduler — KHÔNG để 1 lượt lỗi giết thread {@code @Scheduled}. */
-    @Scheduled(fixedDelayString = "${kyc.outbox.relay-interval-ms:2000}")
+    /**
+     * Entry point của scheduler — KHÔNG để 1 lượt lỗi giết thread {@code @Scheduled}.
+     * {@code initialDelayString} mặc định 0 (production chạy ngay khi bật {@code kafka-enabled}) —
+     * đây là TEST HOOK: {@code fixedDelay} không có initial delay sẽ chạy lượt ĐẦU TIÊN ngay lập tức
+     * bất kể interval lớn cỡ nào, nên test nào bật cờ Kafka nhưng cần relay nền im lặng tuyệt đối
+     * (mock KafkaTemplate, hoặc gọi thẳng relayPass() cần determinism) phải set
+     * {@code kyc.outbox.relay-initial-delay-ms} cực lớn trong {@code @SpringBootTest} properties.
+     */
+    @Scheduled(fixedDelayString = "${kyc.outbox.relay-interval-ms:2000}",
+               initialDelayString = "${kyc.outbox.relay-initial-delay-ms:0}")
     public void relay() {
         try {
             relayPass();

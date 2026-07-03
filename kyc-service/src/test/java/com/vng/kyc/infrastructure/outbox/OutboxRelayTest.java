@@ -32,7 +32,15 @@ import static org.mockito.Mockito.doThrow;
  */
 @SpringBootTest(properties = {
         "kyc.events.kafka-enabled=true",
-        "spring.kafka.bootstrap-servers=${spring.embedded.kafka.brokers}"
+        "spring.kafka.bootstrap-servers=${spring.embedded.kafka.brokers}",
+        // OutboxSchedulingConfig bật @EnableScheduling khi kafka-enabled=true (đúng hợp đồng
+        // production). Test này gọi relay.relayPass() TRỰC TIẾP để giữ determinism (xem javadoc
+        // OutboxRelay#relayPass) và không muốn thread @Scheduled thật chạy song song can thiệp vào
+        // cùng state (spy doThrow, đếm record trên topic). LƯU Ý: fixedDelay không có initial delay
+        // sẽ fire lượt ĐẦU ngay khi context start bất kể interval — nên đẩy CẢ initial-delay (test
+        // hook, xem OutboxRelay#relay) lẫn interval ra ngoài thời gian chạy test.
+        "kyc.outbox.relay-initial-delay-ms=2147483647",
+        "kyc.outbox.relay-interval-ms=2147483647"
 })
 @EmbeddedKafka(partitions = 1, topics = "kyc.revoked") // 1 partition -> offset order == send order (O7 assertion)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -115,6 +123,11 @@ class OutboxRelayTest {
         ConsumerRecord<String, String> rec = consumeOne("grp-a1", "user-A1");
         assertEquals("user-A1", rec.key());
         assertEquals("{\"userId\":\"user-A1\"}", rec.value());
+
+        var traceIdHeader = rec.headers().lastHeader(OutboxRelay.TRACE_ID_HEADER);
+        assertNotNull(traceIdHeader, "record phải có Kafka header traceId (OB5/OB6)");
+        assertFalse(new String(traceIdHeader.value(), java.nio.charset.StandardCharsets.UTF_8).isBlank(),
+                "header traceId không được rỗng");
 
         OutboxEventEntity reloaded = outboxJpa.findById(row.getId()).orElseThrow();
         assertEquals(OutboxStatus.SENT, reloaded.getStatus());

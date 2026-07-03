@@ -30,10 +30,15 @@ kyc:
   outbox:
     relay-interval-ms: ${KYC_OUTBOX_RELAY_INTERVAL_MS:2000}   # OutboxRelay @Scheduled cadence (O2)
     relay-batch-size: ${KYC_OUTBOX_RELAY_BATCH_SIZE:100}      # số row PENDING xử lý mỗi lượt relay
-    # Cờ RIÊNG (không dùng chung kafka-enabled) bật thật sự chạy @Scheduled nền — mặc định TẮT để
-    # test set kyc.events.kafka-enabled=true (vd test đường ghi outbox) không vô tình có relay chạy
-    # nền. Production bật CẢ 2 cờ (kafka-enabled + relay-scheduling-enabled).
-    relay-scheduling-enabled: ${KYC_OUTBOX_RELAY_SCHEDULING_ENABLED:false}
+    # KHÔNG có cờ relay-scheduling-enabled riêng: OutboxSchedulingConfig bật @EnableScheduling ngay
+    # khi kyc.events.kafka-enabled=true (đúng hợp đồng activation của outbox pattern — production chỉ
+    # set KYC_KAFKA_ENABLED=true, không cần biến môi trường thứ hai).
+    # relay-initial-delay-ms mặc định 0 (prod chạy ngay) — TEST HOOK: fixedDelay không có initial
+    # delay sẽ fire lượt ĐẦU ngay khi context start bất kể interval, nên test nào bật kafka-enabled
+    # nhưng cần relay nền im lặng (vd KycServiceOutboxIntegrationTest mock KafkaTemplate, hoặc
+    # OutboxRelayTest gọi thẳng relayPass()) phải override CẢ relay-initial-delay-ms LẪN
+    # relay-interval-ms = 2147483647 trong @SpringBootTest properties của chính nó.
+    relay-initial-delay-ms: ${KYC_OUTBOX_RELAY_INITIAL_DELAY_MS:0}
   internal-hmac-secret: ${KYC_INTERNAL_HMAC_SECRET:local-dev-secret}
   verifier-hmac-secret: ${KYC_VERIFIER_HMAC_SECRET:verifier-dev-secret}
   allowed-services: api-gateway,wallet-service
