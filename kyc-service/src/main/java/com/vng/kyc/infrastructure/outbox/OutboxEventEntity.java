@@ -35,16 +35,30 @@ public class OutboxEventEntity {
 
     private Instant sentAt;
 
+    /**
+     * traceId gốc của request nghiệp vụ (HTTP revoke) tại thời điểm ghi row, không phải traceId
+     * per-pass của relay (OB5 fix): cho phép gateway->kyc->wallet correlate trên CÙNG 1 id xuyên
+     * qua khoảng thời gian outbox trì hoãn publish. Nullable — row cũ (trước fix) hoặc ghi ngoài
+     * ngữ cảnh HTTP (không có MDC traceId) sẽ null, relay fallback về traceId per-pass của nó.
+     */
+    private String traceId;
+
     protected OutboxEventEntity() {}
 
     public OutboxEventEntity(String aggregate, String topic, String payload,
                               OutboxStatus status, Instant createdAt, Instant sentAt) {
+        this(aggregate, topic, payload, status, createdAt, sentAt, null);
+    }
+
+    public OutboxEventEntity(String aggregate, String topic, String payload,
+                              OutboxStatus status, Instant createdAt, Instant sentAt, String traceId) {
         this.aggregate = aggregate;
         this.topic = topic;
         this.payload = payload;
         this.status = status;
         this.createdAt = createdAt;
         this.sentAt = sentAt;
+        this.traceId = traceId;
     }
 
     public Long getId() { return id; }
@@ -54,6 +68,7 @@ public class OutboxEventEntity {
     public OutboxStatus getStatus() { return status; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getSentAt() { return sentAt; }
+    public String getTraceId() { return traceId; }
 
     public void setStatus(OutboxStatus status) { this.status = status; }
     public void setSentAt(Instant sentAt) { this.sentAt = sentAt; }

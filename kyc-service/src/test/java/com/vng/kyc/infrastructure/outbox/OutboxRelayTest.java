@@ -60,6 +60,11 @@ class OutboxRelayTest {
                 aggregate, OutboxKycEventPublisher.TOPIC, payload, OutboxStatus.PENDING, Instant.now(), null));
     }
 
+    private OutboxEventEntity newPending(String aggregate, String payload, String traceId) {
+        return outboxRepository.save(new OutboxEventEntity(
+                aggregate, OutboxKycEventPublisher.TOPIC, payload, OutboxStatus.PENDING, Instant.now(), null, traceId));
+    }
+
     private ConsumerRecord<String, String> consumeOne(String group, String key) {
         Map<String, Object> props = KafkaTestUtils.consumerProps(group, "true", broker);
         try (Consumer<String, String> consumer = new DefaultKafkaConsumerFactory<>(props,
@@ -191,5 +196,36 @@ class OutboxRelayTest {
         ConsumerRecord<String, String> secondDelivery = consumeOne("grp-c1-second", "user-C1");
         assertEquals("{\"userId\":\"user-C1\"}", secondDelivery.value(), "duplicate delivery chấp nhận được");
         assertEquals(OutboxStatus.SENT, outboxJpa.findById(row.getId()).orElseThrow().getStatus());
+    }
+
+    @Test
+    @Order(5)
+    void pendingRow_withStoredTraceId_isUsedAsKafkaHeader_notThePerPassRoot() {
+        String originatingTraceId = "req-trace-user-d1";
+        newPending("user-D1", "{\"userId\":\"user-D1\"}", originatingTraceId);
+
+        relay.relayPass();
+
+        ConsumerRecord<String, String> rec = consumeOne("grp-d1", "user-D1");
+        var traceIdHeader = rec.headers().lastHeader(OutboxRelay.TRACE_ID_HEADER);
+        assertNotNull(traceIdHeader, "record phải có header traceId");
+        assertEquals(originatingTraceId,
+                new String(traceIdHeader.value(), java.nio.charset.StandardCharsets.UTF_8),
+                "header traceId phải là traceId GỐC lưu trong row, không phải root per-pass của relay");
+    }
+
+    @Test
+    @Order(6)
+    void pendingRow_withoutStoredTraceId_fallsBackToPerPassRootTraceId() {
+        // Không truyền traceId (giống row cũ trước fix / ghi ngoài ngữ cảnh HTTP) -> traceId null.
+        newPending("user-D2", "{\"userId\":\"user-D2\"}");
+
+        relay.relayPass();
+
+        ConsumerRecord<String, String> rec = consumeOne("grp-d2", "user-D2");
+        var traceIdHeader = rec.headers().lastHeader(OutboxRelay.TRACE_ID_HEADER);
+        assertNotNull(traceIdHeader, "row không có traceId -> vẫn phải fallback về root per-pass (OB6)");
+        assertFalse(new String(traceIdHeader.value(), java.nio.charset.StandardCharsets.UTF_8).isBlank(),
+                "fallback traceId không được rỗng");
     }
 }

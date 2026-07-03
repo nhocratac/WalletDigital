@@ -2,10 +2,13 @@ package com.vng.kyc.application;
 
 import com.vng.kyc.domain.KycDecision;
 import com.vng.kyc.domain.KycStatus;
+import com.vng.kyc.infrastructure.observability.TraceIdFilter;
 import com.vng.kyc.infrastructure.outbox.OutboxEventEntity;
 import com.vng.kyc.infrastructure.outbox.OutboxRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -52,6 +55,28 @@ class KycServiceOutboxIntegrationTest {
         String subId = kycService.submit(userId, List.of("doc-1"));
         kycService.applyDecision(subId, KycDecision.Type.APPROVE, "verifier-1", "ok");
         return subId;
+    }
+
+    @AfterEach
+    void clearMdc() {
+        MDC.remove(TraceIdFilter.MDC_KEY);
+    }
+
+    @Test
+    void revoke_capturesMdcTraceId_intoOutboxRow_forCorrelationAcrossRelayDelay() {
+        String userId = "outbox-user-trace-1";
+        approveNewCase(userId);
+        String requestTraceId = "req-trace-" + userId;
+        MDC.put(TraceIdFilter.MDC_KEY, requestTraceId);
+
+        kycService.revoke(userId, "compliance-officer", "fraud detected");
+
+        List<OutboxEventEntity> matching = outboxRepository.findPending(100).stream()
+                .filter(e -> e.getAggregate().equals(userId))
+                .toList();
+        assertEquals(1, matching.size());
+        assertEquals(requestTraceId, matching.get(0).getTraceId(),
+                "row phải lưu đúng traceId đang có trong MDC tại thời điểm publish (OB5 correlation fix)");
     }
 
     @Test

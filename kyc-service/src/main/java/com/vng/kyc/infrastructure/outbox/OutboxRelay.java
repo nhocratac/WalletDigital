@@ -88,6 +88,26 @@ public class OutboxRelay {
                 try {
                     send(event);
                     outboxRepository.markSent(event.getId());
+                } catch (InterruptedException ie) {
+                    // Thread bị interrupt (vd shutdown) trong lúc chờ ack — KHÔI PHỤC cờ interrupt
+                    // (không được nuốt, nếu không caller/scheduler không biết mà chờ shutdown kịp
+                    // thời) rồi dừng lượt như mọi lỗi khác (O7).
+                    Thread.currentThread().interrupt();
+                    log.warn("outbox relay: interrupted while sending outbox id={} topic={} aggregate={}"
+                                    + " -> stop this pass (interrupt flag restored): {}",
+                            event.getId(), event.getTopic(), event.getAggregate(), ie.toString());
+                    break;
+                } catch (java.util.concurrent.ExecutionException ee) {
+                    Throwable cause = ee.getCause();
+                    if (cause instanceof InterruptedException) {
+                        Thread.currentThread().interrupt();
+                    }
+                    // O7: dừng cả lượt tại đây — KHÔNG xử lý row kế để giữ thứ tự toàn cục/aggregate.
+                    // Vòng @Scheduled sau sẽ tự retry lại đúng row này (findPending vẫn trả nó là PENDING).
+                    log.warn("outbox relay: publish/markSent failed for outbox id={} topic={} aggregate={}"
+                                    + " -> stop this pass to preserve ordering (will retry next round): {}",
+                            event.getId(), event.getTopic(), event.getAggregate(), ee.toString());
+                    break;
                 } catch (Exception e) {
                     // O7: dừng cả lượt tại đây — KHÔNG xử lý row kế để giữ thứ tự toàn cục/aggregate.
                     // Vòng @Scheduled sau sẽ tự retry lại đúng row này (findPending vẫn trả nó là PENDING).
@@ -105,7 +125,14 @@ public class OutboxRelay {
     private void send(OutboxEventEntity event) throws Exception {
         ProducerRecord<String, String> record =
                 new ProducerRecord<>(event.getTopic(), event.getAggregate(), event.getPayload());
-        String traceId = MDC.get(TraceIdFilter.MDC_KEY);
+        // Ưu tiên traceId GỐC lưu trong row (đặt lúc publishKycRevoked, cùng ngữ cảnh HTTP/MDC của
+        // request revoke — post-review fix) để giữ correlation gateway->kyc->wallet xuyên suốt
+        // outbox delay. Chỉ fallback về root per-pass (OB6) khi row không có traceId (vd row cũ
+        // trước fix, hoặc ghi ngoài ngữ cảnh HTTP).
+        String rowTraceId = event.getTraceId();
+        String traceId = (rowTraceId != null && !rowTraceId.isBlank())
+                ? rowTraceId
+                : MDC.get(TraceIdFilter.MDC_KEY);
         if (traceId != null && !traceId.isBlank()) {
             record.headers().add(TRACE_ID_HEADER, traceId.getBytes(StandardCharsets.UTF_8));
         }
