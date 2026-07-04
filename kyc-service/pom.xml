@@ -57,6 +57,16 @@
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
             </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!-- Bundled Mockito/ByteBuddy (5.14.x / 1.15.x) predates JDK 25 support;
+                         this flag lets the inline mock maker attach anyway. Safe to drop once
+                         spring-boot-starter-parent ships a ByteBuddy build with native JDK 25 support. -->
+                    <argLine>-Dnet.bytebuddy.experimental=true</argLine>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
 </project>

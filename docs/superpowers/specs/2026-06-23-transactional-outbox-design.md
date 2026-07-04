@@ -73,7 +73,7 @@ outbox (bảng trong DB của service phát event — vd kyc)
 | Chỗ | Trước | Sau |
 |---|---|---|
 | kyc `revoke()` | save REVOKED → `publisher.publishKycRevoked()` (dual-write) | save REVOKED **+ INSERT outbox** trong cùng tx; KHÔNG publish trực tiếp |
-| `KafkaKycEventPublisher` | gọi trong luồng nghiệp vụ | dùng bởi **OutboxRelay** (đọc outbox → send) |
+| `KafkaKycEventPublisher` | gọi trong luồng nghiệp vụ | **XOÁ** (đã bị loại theo quyết định 2 của plan) — **OutboxRelay** gửi Kafka trực tiếp qua `KafkaTemplate`, không còn lớp publisher trung gian này |
 | wallet `KycRevokedConsumer` | idempotent (D9) | **giữ nguyên** — đã idempotent, ăn trùng OK |
 
 → Thay đổi gọn: chèn outbox vào tx revoke + thêm relay/purge; consumer không đụng.
@@ -83,8 +83,9 @@ outbox (bảng trong DB của service phát event — vd kyc)
 ## 5. Nợ kỹ thuật & YAGNI
 - **CDC (Debezium)** thay polling — khi cần realtime/bớt job; cùng hạ tầng SP7-OLAP.
 - Outbox cho **wallet** (nếu wallet phát event) → relay per-tenant-schema (fleet).
-- Dead-letter cho outbox row gửi mãi không được (poison) — ghi nợ; hiện retry vô hạn + alert.
+- Dead-letter cho outbox row gửi mãi không được (poison) — ghi nợ; hiện retry vô hạn + log.warn (chưa có alert/metric).
 - Exactly-once (Kafka transactions / EOS) — phức tạp; at-least-once + idempotent là đủ và đơn giản hơn.
+- **Single-instance assumption** — `OutboxRelay.findPending` không có locking/lease (không `FOR UPDATE SKIP LOCKED`, không leader election); thiết kế hiện tại giả định CHỈ MỘT instance kyc chạy relay. Nếu scale-out nhiều instance: at-least-once vẫn an toàn (mỗi row chỉ chuyển SENT sau khi publish thành công, trùng lặp do 2 instance cùng đọc 1 row PENDING vẫn được consumer idempotent nuốt), nhưng **mất thứ tự cross-instance** mà O7 yêu cầu (2 instance có thể xử lý xen kẽ các row của cùng 1 aggregate không theo đúng id tăng dần). Muốn scale-out mà giữ O7 cần thêm `SELECT ... FOR UPDATE SKIP LOCKED` (Postgres) để mỗi instance khoá đúng phần row nó xử lý, hoặc một leader lease (chỉ 1 instance active relay tại một thời điểm).
 
 ---
 
